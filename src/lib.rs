@@ -150,6 +150,24 @@ mod tests {
     }
 
     #[test]
+    fn check_info() {
+        let mut p = Parser::new();
+        {
+            let o = p.receive(0xFF);
+            assert!(o.is_none());
+        }
+        {
+            let o = p.receive(0xFC);
+            assert!(o.is_none());
+        }
+        let o = p.receive(0x03);
+        match o.unwrap() {
+            Command::Info => {}
+            e => panic!("Did not expect: {:?}", e),
+        }
+    }
+
+    #[test]
     fn check_write() {
         let mut p = Parser::new();
         p.receive(0xEF);
