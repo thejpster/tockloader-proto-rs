@@ -31,18 +31,16 @@ pub enum Command<'a> {
 /// The Parser takes bytes and gives you `Command`s.
 pub struct Parser {
     state: State,
-    buffer: [u8; 516],
+    buffer: [u8; 520],
     count: usize,
-    have_escape: bool,
 }
 
 impl Parser {
     pub fn new() -> Parser {
         Parser {
             state: State::Loading,
-            buffer: [0u8; 516],
+            buffer: [0u8; 520],
             count: 0,
-            have_escape: false,
         }
     }
 
@@ -62,7 +60,6 @@ impl Parser {
 
     fn handle_loading(&mut self, ch: u8) -> Option<Command> {
         if ch == 0xFC {
-            self.have_escape = true;
             self.state = State::Escape;
         } else {
             self.load_char(ch);
@@ -71,7 +68,8 @@ impl Parser {
     }
 
     fn handle_escape(&mut self, ch: u8) -> Option<Command> {
-        match ch {
+        self.state = State::Loading;
+        let result = match ch {
             0xFC => {
                 // Double escape means just load an escape
                 self.load_char(ch);
@@ -83,34 +81,32 @@ impl Parser {
             0x06 => {
                 if self.count >= 4 {
                     // Little-endian address in buffer
-                    println!("Ping - Len is {}", self.count);
                     let addr = Self::parse_u32(&self.buffer[self.count - 4..self.count - 1]);
-                    self.count = 0;
                     Some(Command::ErasePage(addr))
                 } else {
-                    self.count = 0;
                     Some(Command::BadCommand)
                 }
             }
             0x07 => {
-                if self.count >= (512 + 4) {
+                let num_expected_bytes: usize = 512 + 4;
+                if self.count >= num_expected_bytes {
                     // Little-endian address in buffer
-                    println!("WritePage - Len is {}", self.count);
-                    let start = self.count - 516;
-                    println!("Starts at {}", start);
+                    let start = self.count - num_expected_bytes;
                     let addr = Self::parse_u32(&self.buffer[start..start + 4]);
-                    self.count = 0;
                     Some(Command::WritePage(
                         addr,
-                        &self.buffer[start + 4..start + 516],
+                        &self.buffer[start + 4..start + num_expected_bytes],
                     ))
                 } else {
-                    self.count = 0;
                     Some(Command::BadCommand)
                 }
             }
             _ => None,
+        };
+        if result.is_some() {
+            self.count = 0;
         }
+        result
     }
 
     fn parse_u32(data: &[u8]) -> u32 {
@@ -167,6 +163,10 @@ mod tests {
         }
     }
 
+    fn make_byte(index: u32) -> u8 {
+        (index & 0xFF) as u8
+    }
+
     #[test]
     fn check_write() {
         let mut p = Parser::new();
@@ -174,8 +174,12 @@ mod tests {
         p.receive(0xBE);
         p.receive(0xAD);
         p.receive(0xDE);
-        for _ in 0..512 {
-            p.receive(0xCC);
+        for i in 0..512 {
+            let datum = make_byte(i);
+            p.receive(datum);
+            if datum == 0xFC {
+                p.receive(datum);
+            }
         }
         p.receive(0xFC); // Escape
         let o = p.receive(0x07); // WriteFlash
@@ -183,6 +187,10 @@ mod tests {
             Command::WritePage(addr, ref page) => {
                 assert_eq!(addr, 0xDEADBEEF);
                 assert_eq!(page.len(), 512);
+                for i in 0..512 {
+                    let datum = make_byte(i);
+                    assert_eq!(datum, page[i as usize]);
+                }
             }
             e => panic!("Did not expect: {:?}", e),
         }
