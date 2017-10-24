@@ -7,47 +7,60 @@
 //! in Rust!
 //#![no_std]
 
-enum State {
+enum DecoderState {
     Loading,
     Escape,
 }
 
-/// Commands supported by the protocol
+/// Commands and Reponses supported by the protocol
 #[derive(Debug)]
-pub enum Command<'a> {
-    Ping,
-    Info,
-    Reset,
-    ErasePage(u32),
-    WritePage(u32, &'a [u8]),
-    ReadRange,
-    SetAttribute,
-    GetAttribute,
-    CrcInternalFlash,
-    ChangeBaudRate,
-    BadCommand,
+pub enum CommandReponse<'a> {
+    PingCmd, // 0x01
+    InfoCmd, // 0x03
+    ResetCmd, // 0x05
+    ErasePageCmd { address: u32 }, // 0x06
+    WritePageCmd { address: u32, data: &'a [u8] }, // 0x07
+    UnknownCmd, // Not seen on the wire
+
+    PingRsp, // 0x11
+    OkRsp, // 0x15
+    BadAddressRsp, // 0x12
+    UnknownRsp, // 0x16
 }
 
-/// The Parser takes bytes and gives you `Command`s.
-pub struct Parser {
-    state: State,
+/// The `Decoder` takes bytes and gives you `CommandReponse`s.
+pub struct Decoder {
+    state: DecoderState,
     buffer: [u8; 520],
     count: usize,
 }
 
-impl Parser {
-    pub fn new() -> Parser {
-        Parser {
-            state: State::Loading,
+#[derive(Debug)]
+enum EncoderState {
+    Escape,
+    CommandReponse,
+    Data(usize),
+}
+
+/// The `Encoder` takes a `CommandReponse` and gives you bytes.
+pub struct Encoder<'a> {
+    command: &'a CommandReponse<'a>,
+    count: usize,
+}
+
+impl Decoder {
+    pub fn new() -> Decoder {
+        Decoder {
+            state: DecoderState::Loading,
             buffer: [0u8; 520],
             count: 0,
         }
     }
 
-    pub fn receive(&mut self, ch: u8) -> Option<Command> {
+    pub fn receive(&mut self, ch: u8) -> Option<CommandReponse> {
         match self.state {
-            State::Loading => self.handle_loading(ch),
-            State::Escape => self.handle_escape(ch),
+            DecoderState::Loading => self.handle_loading(ch),
+            DecoderState::Escape => self.handle_escape(ch),
         }
     }
 
@@ -58,33 +71,33 @@ impl Parser {
         }
     }
 
-    fn handle_loading(&mut self, ch: u8) -> Option<Command> {
+    fn handle_loading(&mut self, ch: u8) -> Option<CommandReponse> {
         if ch == 0xFC {
-            self.state = State::Escape;
+            self.state = DecoderState::Escape;
         } else {
             self.load_char(ch);
         }
         None
     }
 
-    fn handle_escape(&mut self, ch: u8) -> Option<Command> {
-        self.state = State::Loading;
+    fn handle_escape(&mut self, ch: u8) -> Option<CommandReponse> {
+        self.state = DecoderState::Loading;
         let result = match ch {
             0xFC => {
                 // Double escape means just load an escape
                 self.load_char(ch);
                 None
             }
-            0x01 => Some(Command::Ping),
-            0x03 => Some(Command::Info),
-            0x05 => Some(Command::Reset),
+            0x01 => Some(CommandReponse::PingCmd),
+            0x03 => Some(CommandReponse::InfoCmd),
+            0x05 => Some(CommandReponse::ResetCmd),
             0x06 => {
                 if self.count >= 4 {
                     // Little-endian address in buffer
                     let addr = Self::parse_u32(&self.buffer[self.count - 4..self.count - 1]);
-                    Some(Command::ErasePage(addr))
+                    Some(CommandReponse::ErasePageCmd { address: addr })
                 } else {
-                    Some(Command::BadCommand)
+                    Some(CommandReponse::UnknownCmd)
                 }
             }
             0x07 => {
@@ -93,12 +106,12 @@ impl Parser {
                     // Little-endian address in buffer
                     let start = self.count - num_expected_bytes;
                     let addr = Self::parse_u32(&self.buffer[start..start + 4]);
-                    Some(Command::WritePage(
-                        addr,
-                        &self.buffer[start + 4..start + num_expected_bytes],
-                    ))
+                    Some(CommandReponse::WritePageCmd {
+                        address: addr,
+                        data: &self.buffer[start + 4..start + num_expected_bytes],
+                    })
                 } else {
-                    Some(Command::BadCommand)
+                    Some(CommandReponse::UnknownCmd)
                 }
             }
             _ => None,
@@ -123,13 +136,81 @@ impl Parser {
     }
 }
 
+impl<'a> Encoder<'a> {
+    pub fn new(command: &'a CommandReponse) -> Encoder<'a> {
+        Encoder {
+            command: command,
+            count: 0,
+        }
+    }
+
+    pub fn next(&mut self) -> Option<u8> {
+        match self.command {
+            &CommandReponse::PingCmd => self.render_ping_cmd(),
+            &CommandReponse::InfoCmd => self.render_info_cmd(),
+            &CommandReponse::ResetCmd => self.render_reset_cmd(),
+            &CommandReponse::ErasePageCmd { address } => self.render_erasepage_cmd(address),
+            &CommandReponse::WritePageCmd {
+                address,
+                data,
+            } => self.render_writepage_cmd(address, data),
+            &CommandReponse::UnknownCmd => self.render_unknown_cmd(),
+            &CommandReponse::PingRsp => self.render_ping_rsp(),
+            &CommandReponse::OkRsp => self.render_ok_rsp(),
+            &CommandReponse::BadAddressRsp => self.render_badaddress_rsp(),
+            &CommandReponse::UnknownRsp => self.render_unknown_rsp(),
+        }
+    }
+
+    pub fn render_ping_cmd(&mut self) -> Option<u8> {
+        None
+    }
+
+    pub fn render_info_cmd(&mut self) -> Option<u8> {
+        None
+    }
+
+    pub fn render_reset_cmd(&mut self) -> Option<u8> {
+        None
+    }
+
+    pub fn render_erasepage_cmd(&mut self, _address: u32) -> Option<u8> {
+        None
+    }
+
+    pub fn render_writepage_cmd(&mut self, _address: u32, _data: &[u8]) -> Option<u8> {
+        None
+    }
+
+    pub fn render_unknown_cmd(&mut self) -> Option<u8> {
+        None
+    }
+
+    pub fn render_ping_rsp(&mut self) -> Option<u8> {
+        None
+    }
+
+    pub fn render_ok_rsp(&mut self) -> Option<u8> {
+        None
+    }
+
+    pub fn render_badaddress_rsp(&mut self) -> Option<u8> {
+        None
+    }
+
+    pub fn render_unknown_rsp(&mut self) -> Option<u8> {
+        None
+    }
+}
+
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn check_ping() {
-        let mut p = Parser::new();
+        let mut p = Decoder::new();
         {
             let o = p.receive(0xFF);
             assert!(o.is_none());
@@ -140,14 +221,14 @@ mod tests {
         }
         let o = p.receive(0x01);
         match o.unwrap() {
-            Command::Ping => {}
+            CommandReponse::PingCmd => {}
             e => panic!("Did not expect: {:?}", e),
         }
     }
 
     #[test]
     fn check_info() {
-        let mut p = Parser::new();
+        let mut p = Decoder::new();
         {
             let o = p.receive(0xFF);
             assert!(o.is_none());
@@ -158,7 +239,7 @@ mod tests {
         }
         let o = p.receive(0x03);
         match o.unwrap() {
-            Command::Info => {}
+            CommandReponse::InfoCmd => {}
             e => panic!("Did not expect: {:?}", e),
         }
     }
@@ -169,7 +250,7 @@ mod tests {
 
     #[test]
     fn check_write() {
-        let mut p = Parser::new();
+        let mut p = Decoder::new();
         p.receive(0xEF);
         p.receive(0xBE);
         p.receive(0xAD);
@@ -184,7 +265,10 @@ mod tests {
         p.receive(0xFC); // Escape
         let o = p.receive(0x07); // WriteFlash
         match o.unwrap() {
-            Command::WritePage(addr, ref page) => {
+            CommandReponse::WritePageCmd {
+                address: addr,
+                data: ref page,
+            } => {
                 assert_eq!(addr, 0xDEADBEEF);
                 assert_eq!(page.len(), 512);
                 for i in 0..512 {
