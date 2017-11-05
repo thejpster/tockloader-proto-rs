@@ -53,6 +53,12 @@ enum DecoderState {
     Escape,
 }
 
+#[derive(Debug)]
+pub enum BaudMode {
+    Set, // 0x01
+    Verify, // 0x02
+}
+
 /// Commands and Reponses supported by the protocol
 #[derive(Debug)]
 pub enum CommandReponse<'a> {
@@ -61,12 +67,44 @@ pub enum CommandReponse<'a> {
     ResetCmd, // CMD_RESET
     ErasePageCmd { address: u32 }, // CMD_EPAGE
     WritePageCmd { address: u32, data: &'a [u8] }, // CMD_WPAGE
+    EraseExBlockCmd { address: u32 }, // CMD_XEBLOCK
+    WriteExPageCmd { address: u32, data: &'a [u8] }, // CMD_XWPAGE
+    CrcRxBufferCmd, // CMD_CRCRX
+    ReadRangeCmd { address: u32, length: u16 }, // CMD_RRANGE
+    ExReadRangeCmd { address: u32, length: u16 }, // CMD_XRRANGE
+    SetAttrCmd {
+        index: u8,
+        key: [u8; 8],
+        value: &'a [u8],
+    }, // CMD_SATTR
+    GetAttrCmd { index: u8 }, // CMD_SATTR
+    CrcIntFlashCmd { address: u32, length: u32 }, // CMD_CRCIF
+    CrcExFlashCmd { address: u32, length: u32 }, // CMD_CRCEF
+    EraseExPageCmd { address: u32 }, // CMD_XEPAGE
+    ExFlashInitCmd, // CMD_XFINIT
+    ClockOutCmd, // CMD_CLKOUT
+    WriteFlashUserPagesCmd { page1: u32, page2: u32 }, // CMD_WUSER
+    ChangeBaudCmd { mode: BaudMode, baud: u32 }, // CMD_CHANGE_BAUD
+
     UnknownCmd, // Not seen on the wire
 
-    PingRsp, // RES_PONG
-    OkRsp, // 0x15
-    BadAddressRsp, // 0x12
-    UnknownRsp, // 0x16
+    OverflowRsp, // RES_OVERFLOW
+    PongRsp, // RES_PONG
+    BadAddressRsp, // RES_BADADDR
+    InternalErrorRsp, // RES_INTERROR
+    BadArgumentsRsp, // RES_BADARGS
+    OkRsp, // RES_OK
+    UnknownRsp, // RES_UNKNOWN
+    ExFlashTimeoutRsp, // RES_XFTIMEOUT
+    ExFlashPageErrorRsp, // RES_XFEPE ??
+    CrcRxRsp, // RES_CRCRX
+    ReadRangeRsp, // RES_RRANGE
+    ExReadRangeRsp, // RES_XRRANGE
+    GetAttrRsp, // RES_GATTR
+    CrcIntFlashRsp, // RES_CRCIF
+    CrcExFlashRsp, // RES_CRCXF
+    InfoRsp, // RES_INFO
+    ChangeBaudFailRsp, // RES_CHANGE_BAUD_FAIL
 }
 
 /// The `Decoder` takes bytes and gives you `CommandReponse`s.
@@ -83,6 +121,9 @@ pub struct Encoder<'a> {
 }
 
 impl Decoder {
+    /// Create a new `Decoder`.
+    ///
+    /// The decoder is fed bytes with the `receive` method.
     pub fn new() -> Decoder {
         Decoder {
             state: DecoderState::Loading,
@@ -91,10 +132,17 @@ impl Decoder {
         }
     }
 
+    /// Empty the RX buffer.
     pub fn reset(&mut self) {
         self.count = 0;
     }
 
+    /// Process incoming bytes.
+    ///
+    /// The decoder is fed bytes with the `receive` method. If not enough
+    /// bytes have been seen, this function returns `None`. Once enough bytes
+    /// have been seen, it returns `Some(CommandResponse)` containing the
+    /// decoded Command (or Response).
     pub fn receive(&mut self, ch: u8) -> Option<CommandReponse> {
         match self.state {
             DecoderState::Loading => self.handle_loading(ch),
@@ -127,7 +175,7 @@ impl Decoder {
                 None
             }
             CMD_PING => Some(CommandReponse::PingCmd),
-            RES_PONG => Some(CommandReponse::PingRsp),
+            RES_PONG => Some(CommandReponse::PongRsp),
             CMD_INFO => Some(CommandReponse::InfoCmd),
             CMD_RESET => Some(CommandReponse::ResetCmd),
             CMD_EPAGE => {
@@ -179,6 +227,10 @@ impl Decoder {
 }
 
 impl<'a> Encoder<'a> {
+    /// Create a new `Encoder`.
+    ///
+    /// The encoder takes a reference to a `CommandResponse` to encode. The `next` method
+    /// will then supply the encoded bytes one at a time.
     pub fn new(command: &'a CommandReponse) -> Encoder<'a> {
         Encoder {
             command: command,
@@ -186,6 +238,8 @@ impl<'a> Encoder<'a> {
         }
     }
 
+    /// Supply the next encoded byte. Once all the bytes have been emitted, it
+    /// returns `None` forevermore.
     pub fn next(&mut self) -> Option<u8> {
         let (inc, result) = match self.command {
             &CommandReponse::PingCmd => self.render_ping_cmd(),
@@ -196,10 +250,11 @@ impl<'a> Encoder<'a> {
                 self.render_writepage_cmd(address, data)
             }
             &CommandReponse::UnknownCmd => self.render_unknown_cmd(),
-            &CommandReponse::PingRsp => self.render_ping_rsp(),
+            &CommandReponse::PongRsp => self.render_pong_rsp(),
             &CommandReponse::OkRsp => self.render_ok_rsp(),
             &CommandReponse::BadAddressRsp => self.render_badaddress_rsp(),
             &CommandReponse::UnknownRsp => self.render_unknown_rsp(),
+            _ => unimplemented!("Not implemented"),
         };
         self.count = self.count + inc;
         result
@@ -274,7 +329,7 @@ impl<'a> Encoder<'a> {
         (0, None)
     }
 
-    pub fn render_ping_rsp(&mut self) -> (usize, Option<u8>) {
+    pub fn render_pong_rsp(&mut self) -> (usize, Option<u8>) {
         match self.count {
             0 => (1, Some(ESCAPE_CHAR)), // Escape
             1 => (1, Some(RES_PONG)), // Response
@@ -330,7 +385,7 @@ mod tests {
     }
 
     #[test]
-    fn check_ping_rsp_decode() {
+    fn check_pong_rsp_decode() {
         let mut p = Decoder::new();
         {
             // Garbage should be ignored
@@ -343,14 +398,14 @@ mod tests {
         }
         let o = p.receive(RES_PONG);
         match o.unwrap() {
-            CommandReponse::PingRsp => {}
+            CommandReponse::PongRsp => {}
             e => panic!("Did not expect: {:?}", e),
         }
     }
 
     #[test]
-    fn check_ping_rsp_encode() {
-        let cmd = CommandReponse::PingRsp;
+    fn check_pong_rsp_encode() {
+        let cmd = CommandReponse::PongRsp;
         let mut e = Encoder::new(&cmd);
         assert_eq!(e.next(), Some(ESCAPE_CHAR));
         assert_eq!(e.next(), Some(RES_PONG));
