@@ -131,9 +131,11 @@ impl Decoder {
             CMD_INFO => Some(CommandReponse::InfoCmd),
             CMD_RESET => Some(CommandReponse::ResetCmd),
             CMD_EPAGE => {
-                if self.count >= 4 {
+                let num_expected_bytes: usize = 4;
+                if self.count >= num_expected_bytes {
                     // Little-endian address in buffer
-                    let addr = Self::parse_u32(&self.buffer[self.count - 4..self.count - 1]);
+                    let start = self.count - num_expected_bytes;
+                    let addr = Self::parse_u32(&self.buffer[start..start + 4]);
                     Some(CommandReponse::ErasePageCmd { address: addr })
                 } else {
                     Some(CommandReponse::UnknownCmd)
@@ -242,11 +244,20 @@ impl<'a> Encoder<'a> {
     }
 
     pub fn render_reset_cmd(&mut self) -> (usize, Option<u8>) {
-        (0, None)
+        match self.count {
+            0 => (1, Some(ESCAPE_CHAR)), // Escape
+            1 => (1, Some(CMD_RESET)), // Command
+            _ => (0, None),
+        }
     }
 
-    pub fn render_erasepage_cmd(&mut self, _address: u32) -> (usize, Option<u8>) {
-        (0, None)
+    pub fn render_erasepage_cmd(&mut self, address: u32) -> (usize, Option<u8>) {
+        match self.count {
+            0...3 => Self::render_u32(self.count, address),
+            4 => (1, Some(ESCAPE_CHAR)), // Escape
+            5 => (1, Some(CMD_EPAGE)), // Command
+            _ => (0, None),
+        }
     }
 
     pub fn render_writepage_cmd(&mut self, address: u32, data: &[u8]) -> (usize, Option<u8>) {
@@ -435,4 +446,67 @@ mod tests {
         assert_eq!(e.next(), None);
         assert_eq!(e.next(), None);
     }
+
+    #[test]
+    fn check_erase_page_cmd_decode() {
+        let mut p = Decoder::new();
+        p.receive(0xEF);
+        p.receive(0xBE);
+        p.receive(0xAD);
+        p.receive(0xDE);
+        p.receive(ESCAPE_CHAR); // Escape
+        let o = p.receive(CMD_EPAGE); // ErasePage
+        match o.unwrap() {
+            CommandReponse::ErasePageCmd { address: addr } => {
+                assert_eq!(addr, 0xDEADBEEF);
+            }
+            e => panic!("Did not expect: {:?}", e),
+        }
+    }
+
+    #[test]
+    fn check_erase_page_cmd_encode() {
+        let cmd = CommandReponse::ErasePageCmd { address: 0xDEADBEEF };
+        let mut e = Encoder::new(&cmd);
+        // 4 byte address, little-endian
+        assert_eq!(e.next(), Some(0xEF));
+        assert_eq!(e.next(), Some(0xBE));
+        assert_eq!(e.next(), Some(0xAD));
+        assert_eq!(e.next(), Some(0xDE));
+        assert_eq!(e.next(), Some(ESCAPE_CHAR));
+        assert_eq!(e.next(), Some(CMD_EPAGE));
+        assert_eq!(e.next(), None);
+        assert_eq!(e.next(), None);
+    }
+
+    #[test]
+    fn check_reset_cmd_decode() {
+        let mut p = Decoder::new();
+        {
+            // Garbage should be ignored
+            let o = p.receive(0xFF);
+            assert!(o.is_none());
+        }
+        {
+            let o = p.receive(ESCAPE_CHAR);
+            assert!(o.is_none());
+        }
+        let o = p.receive(CMD_RESET);
+        match o.unwrap() {
+            CommandReponse::ResetCmd => {}
+            e => panic!("Did not expect: {:?}", e),
+        }
+    }
+
+    #[test]
+    fn check_reset_cmd_encode() {
+        let cmd = CommandReponse::ResetCmd;
+        let mut e = Encoder::new(&cmd);
+        assert_eq!(e.next(), Some(ESCAPE_CHAR));
+        assert_eq!(e.next(), Some(CMD_RESET));
+        assert_eq!(e.next(), None);
+        assert_eq!(e.next(), None);
+    }
+
+
 }
