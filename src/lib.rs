@@ -728,12 +728,35 @@ impl<'a> ResponseEncoder<'a> {
     }
 }
 
+/// Convert a four-byte array to a u32 - little endian.
+fn parse_u32(data: &[u8]) -> u32 {
+    let mut result: u32 = 0;
+    result += data[3] as u32;
+    result <<= 8;
+    result += data[2] as u32;
+    result <<= 8;
+    result += data[1] as u32;
+    result <<= 8;
+    result += data[0] as u32;
+    result
+}
+
+/// Convert a two-byte array to a u16 - little-endian.
+fn parse_u16(data: &[u8]) -> u16 {
+    let mut result: u16 = 0;
+    result += data[1] as u16;
+    result <<= 8;
+    result += data[0] as u16;
+    result
+}
+
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn check_ping_cmd_decode() {
+    fn check_cmd_ping_decode() {
         let mut p = CommandDecoder::new();
         assert!(p.receive(ESCAPE_CHAR).is_none());
         let o = p.receive(CMD_PING);
@@ -744,7 +767,7 @@ mod tests {
     }
 
     #[test]
-    fn check_ping_cmd_encode() {
+    fn check_cmd_ping_encode() {
         let cmd = Command::Ping;
         let mut e = CommandEncoder::new(&cmd);
         assert_eq!(e.next(), Some(ESCAPE_CHAR));
@@ -775,7 +798,7 @@ mod tests {
     }
 
     #[test]
-    fn check_info_cmd_decode() {
+    fn check_cmd_info_decode() {
         let mut p = CommandDecoder::new();
         assert!(p.receive(ESCAPE_CHAR).is_none());
         let o = p.receive(CMD_INFO);
@@ -786,7 +809,7 @@ mod tests {
     }
 
     #[test]
-    fn check_info_cmd_encode() {
+    fn check_cmd_info_encode() {
         let cmd = Command::Info;
         let mut e = CommandEncoder::new(&cmd);
         assert_eq!(e.next(), Some(ESCAPE_CHAR));
@@ -796,7 +819,7 @@ mod tests {
     }
 
     #[test]
-    fn check_write_page_cmd_decode() {
+    fn check_cmd_write_page_decode() {
         let mut p = CommandDecoder::new();
         p.receive(0xEF);
         p.receive(0xBE);
@@ -828,7 +851,7 @@ mod tests {
     }
 
     #[test]
-    fn check_write_page_cmd_encode() {
+    fn check_cmd_write_page_encode() {
         let buffer: [u8; 5] = [0, 1, 2, 3, 4];
         let cmd = Command::WritePage {
             address: 0xDEADBEEF,
@@ -857,7 +880,7 @@ mod tests {
     }
 
     #[test]
-    fn check_erase_page_cmd_decode() {
+    fn check_cmd_erase_page_decode() {
         let mut p = CommandDecoder::new();
         p.receive(0xEF);
         p.receive(0xBE);
@@ -874,7 +897,7 @@ mod tests {
     }
 
     #[test]
-    fn check_erase_page_cmd_encode() {
+    fn check_cmd_erase_page_encode() {
         let cmd = Command::ErasePage { address: 0xDEADBEEF };
         let mut e = CommandEncoder::new(&cmd);
         // 4 byte address, little-endian
@@ -889,7 +912,7 @@ mod tests {
     }
 
     #[test]
-    fn check_reset_cmd_decode() {
+    fn check_cmd_reset_decode() {
         let mut p = CommandDecoder::new();
         {
             let o = p.receive(ESCAPE_CHAR);
@@ -903,7 +926,7 @@ mod tests {
     }
 
     #[test]
-    fn check_reset_cmd_encode() {
+    fn check_cmd_reset_encode() {
         let cmd = Command::Reset;
         let mut e = CommandEncoder::new(&cmd);
         assert_eq!(e.next(), Some(ESCAPE_CHAR));
@@ -913,7 +936,7 @@ mod tests {
     }
 
     #[test]
-    fn check_id_cmd_decode() {
+    fn check_cmd_id_decode() {
         let mut p = CommandDecoder::new();
         {
             let o = p.receive(ESCAPE_CHAR);
@@ -927,7 +950,7 @@ mod tests {
     }
 
     #[test]
-    fn check_id_cmd_encode() {
+    fn check_cmd_id_encode() {
         let cmd = Command::Id;
         let mut e = CommandEncoder::new(&cmd);
         assert_eq!(e.next(), Some(ESCAPE_CHAR));
@@ -935,29 +958,6 @@ mod tests {
         assert_eq!(e.next(), None);
         assert_eq!(e.next(), None);
     }
-}
-
-
-/// Convert a four-byte array to a u32 - little endian.
-fn parse_u32(data: &[u8]) -> u32 {
-    let mut result: u32 = 0;
-    result += data[3] as u32;
-    result <<= 8;
-    result += data[2] as u32;
-    result <<= 8;
-    result += data[1] as u32;
-    result <<= 8;
-    result += data[0] as u32;
-    result
-}
-
-/// Convert a two-byte array to a u16 - little-endian.
-fn parse_u16(data: &[u8]) -> u16 {
-    let mut result: u16 = 0;
-    result += data[1] as u16;
-    result <<= 8;
-    result += data[0] as u16;
-    result
 }
 
 //
