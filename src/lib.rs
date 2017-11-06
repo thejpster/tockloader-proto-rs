@@ -5,59 +5,22 @@
 //! protocol. This crate implements that protocol so
 //! that you can write future tockloader compatible bootloaders
 //! in Rust!
-//#![no_std]
 
-const ESCAPE_CHAR: u8 = 0xFC;
+#![no_std]
 
-const CMD_PING: u8 = 0x01;
-const CMD_INFO: u8 = 0x03;
-const CMD_ID: u8 = 0x04;
-const CMD_RESET: u8 = 0x05;
-const CMD_EPAGE: u8 = 0x06;
-const CMD_WPAGE: u8 = 0x07;
-const CMD_XEBLOCK: u8 = 0x08;
-const CMD_XWPAGE: u8 = 0x09;
-const CMD_CRCRX: u8 = 0x10;
-const CMD_RRANGE: u8 = 0x11;
-const CMD_XRRANGE: u8 = 0x12;
-const CMD_SATTR: u8 = 0x13;
-const CMD_GATTR: u8 = 0x14;
-const CMD_CRCIF: u8 = 0x15;
-const CMD_CRCEF: u8 = 0x16;
-const CMD_XEPAGE: u8 = 0x17;
-const CMD_XFINIT: u8 = 0x18;
-const CMD_CLKOUT: u8 = 0x19;
-const CMD_WUSER: u8 = 0x20;
-const CMD_CHANGE_BAUD: u8 = 0x21;
+// ****************************************************************************
+//
+// Imports
+//
+// ****************************************************************************
 
-const RES_OVERFLOW: u8 = 0x10;
-const RES_PONG: u8 = 0x11;
-const RES_BADADDR: u8 = 0x12;
-const RES_INTERROR: u8 = 0x13;
-const RES_BADARGS: u8 = 0x14;
-const RES_OK: u8 = 0x15;
-const RES_UNKNOWN: u8 = 0x16;
-const RES_XFTIMEOUT: u8 = 0x17;
-const RES_XFEPE: u8 = 0x18;
-const RES_CRCRX: u8 = 0x19;
-const RES_RRANGE: u8 = 0x20;
-const RES_XRRANGE: u8 = 0x21;
-const RES_GATTR: u8 = 0x22;
-const RES_CRCIF: u8 = 0x23;
-const RES_CRCXF: u8 = 0x24;
-const RES_INFO: u8 = 0x25;
-const RES_CHANGE_BAUD_FAIL: u8 = 0x26;
+// None
 
-enum DecoderState {
-    Loading,
-    Escape,
-}
-
-#[derive(Debug, PartialEq, Clone, Copy)]
-pub enum BaudMode {
-    Set, // 0x01
-    Verify, // 0x02
-}
+// ****************************************************************************
+//
+// Public Types
+//
+// ****************************************************************************
 
 /// Commands supported by the protocol. A bootloader will decode these and a
 /// flash tool will encode them.
@@ -201,6 +164,84 @@ pub struct ResponseEncoder<'a> {
     count: usize,
     sent_escape: bool,
 }
+
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum BaudMode {
+    Set, // 0x01
+    Verify, // 0x02
+}
+
+// ****************************************************************************
+//
+// Public Data
+//
+// ****************************************************************************
+
+// None
+
+// ****************************************************************************
+//
+// Private Types
+//
+// ****************************************************************************
+
+enum DecoderState {
+    Loading,
+    Escape,
+}
+
+// ****************************************************************************
+//
+// Private Data
+//
+// ****************************************************************************
+
+const ESCAPE_CHAR: u8 = 0xFC;
+
+const CMD_PING: u8 = 0x01;
+const CMD_INFO: u8 = 0x03;
+const CMD_ID: u8 = 0x04;
+const CMD_RESET: u8 = 0x05;
+const CMD_EPAGE: u8 = 0x06;
+const CMD_WPAGE: u8 = 0x07;
+const CMD_XEBLOCK: u8 = 0x08;
+const CMD_XWPAGE: u8 = 0x09;
+const CMD_CRCRX: u8 = 0x10;
+const CMD_RRANGE: u8 = 0x11;
+const CMD_XRRANGE: u8 = 0x12;
+const CMD_SATTR: u8 = 0x13;
+const CMD_GATTR: u8 = 0x14;
+const CMD_CRCIF: u8 = 0x15;
+const CMD_CRCEF: u8 = 0x16;
+const CMD_XEPAGE: u8 = 0x17;
+const CMD_XFINIT: u8 = 0x18;
+const CMD_CLKOUT: u8 = 0x19;
+const CMD_WUSER: u8 = 0x20;
+const CMD_CHANGE_BAUD: u8 = 0x21;
+
+const RES_OVERFLOW: u8 = 0x10;
+const RES_PONG: u8 = 0x11;
+const RES_BADADDR: u8 = 0x12;
+const RES_INTERROR: u8 = 0x13;
+const RES_BADARGS: u8 = 0x14;
+const RES_OK: u8 = 0x15;
+const RES_UNKNOWN: u8 = 0x16;
+const RES_XFTIMEOUT: u8 = 0x17;
+const RES_XFEPE: u8 = 0x18;
+const RES_CRCRX: u8 = 0x19;
+const RES_RRANGE: u8 = 0x20;
+const RES_XRRANGE: u8 = 0x21;
+const RES_GATTR: u8 = 0x22;
+const RES_CRCIF: u8 = 0x23;
+const RES_CRCXF: u8 = 0x24;
+const RES_INFO: u8 = 0x25;
+const RES_CHANGE_BAUD_FAIL: u8 = 0x26;
+
+// ****************************************************************************
+//
+// Public Impl/Functions/Modules
+//
+// ****************************************************************************
 
 impl CommandDecoder {
     /// Create a new `CommandDecoder`.
@@ -600,15 +641,15 @@ impl<'a> ResponseEncoder<'a> {
     pub fn next(&mut self) -> Option<u8> {
         let count = self.count;
         let (inc, result) = match self.response {
-            &Response::Overflow => self.render_basic_rsp(count, RES_OVERFLOW),
-            &Response::Pong => self.render_basic_rsp(count, RES_PONG),
-            &Response::BadAddress => self.render_basic_rsp(count, RES_BADADDR),
-            &Response::InternalError => self.render_basic_rsp(count, RES_INTERROR),
-            &Response::BadArguments => self.render_basic_rsp(count, RES_BADARGS),
-            &Response::Ok => self.render_basic_rsp(count, RES_OK),
-            &Response::Unknown => self.render_basic_rsp(count, RES_UNKNOWN),
-            &Response::ExFlashTimeout => self.render_basic_rsp(count, RES_XFTIMEOUT),
-            &Response::ExFlashPageError => self.render_basic_rsp(count, RES_XFEPE),
+            &Response::Overflow => self.render_header(count, RES_OVERFLOW),
+            &Response::Pong => self.render_header(count, RES_PONG),
+            &Response::BadAddress => self.render_header(count, RES_BADADDR),
+            &Response::InternalError => self.render_header(count, RES_INTERROR),
+            &Response::BadArguments => self.render_header(count, RES_BADARGS),
+            &Response::Ok => self.render_header(count, RES_OK),
+            &Response::Unknown => self.render_header(count, RES_UNKNOWN),
+            &Response::ExFlashTimeout => self.render_header(count, RES_XFTIMEOUT),
+            &Response::ExFlashPageError => self.render_header(count, RES_XFEPE),
             &Response::CrcRxBuffer { length, crc } => self.render_crc_rx_buffer(length, crc),
             &Response::ReadRange { data } => self.render_read_range(data),
             &Response::ExReadRange { data } => self.render_ex_read_range(data),
@@ -616,7 +657,7 @@ impl<'a> ResponseEncoder<'a> {
             &Response::CrcIntFlash { crc } => self.render_crc_int_flash(crc),
             &Response::CrcExFlash { crc } => self.render_crc_ex_flash(crc),
             &Response::Info { info } => self.render_info(info),
-            &Response::ChangeBaudFail => self.render_basic_rsp(count, RES_CHANGE_BAUD_FAIL),
+            &Response::ChangeBaudFail => self.render_header(count, RES_CHANGE_BAUD_FAIL),
         };
         self.count = self.count + inc;
         result
@@ -639,7 +680,7 @@ impl<'a> ResponseEncoder<'a> {
     fn render_crc_rx_buffer(&mut self, length: u16, crc: u32) -> (usize, Option<u8>) {
         let count = self.count;
         match count {
-            0...1 => self.render_basic_rsp(count, RES_CRCRX),
+            0...1 => self.render_header(count, RES_CRCRX),
             2...3 => self.render_u16(count - 2, length),
             4...7 => self.render_u32(count - 4, crc),
             _ => (0, None),
@@ -649,7 +690,7 @@ impl<'a> ResponseEncoder<'a> {
     fn render_read_range(&mut self, data: &[u8]) -> (usize, Option<u8>) {
         let count = self.count;
         match count {
-            0...1 => self.render_basic_rsp(count, RES_RRANGE),
+            0...1 => self.render_header(count, RES_RRANGE),
             x if x <= data.len() + 2 => self.send_byte(data[x - 2]),
             _ => (0, None),
         }
@@ -658,7 +699,7 @@ impl<'a> ResponseEncoder<'a> {
     fn render_ex_read_range(&mut self, data: &[u8]) -> (usize, Option<u8>) {
         let count = self.count;
         match count {
-            0...1 => self.render_basic_rsp(count, RES_XRRANGE),
+            0...1 => self.render_header(count, RES_XRRANGE),
             x if x <= data.len() + 2 => self.send_byte(data[x - 2]),
             _ => (0, None),
         }
@@ -667,7 +708,7 @@ impl<'a> ResponseEncoder<'a> {
     fn render_get_attr(&mut self, key: &[u8], value: &[u8]) -> (usize, Option<u8>) {
         let count = self.count;
         match count {
-            0...1 => self.render_basic_rsp(count, RES_GATTR),
+            0...1 => self.render_header(count, RES_GATTR),
             2...9 => self.render_buffer(count - 2, key),
             _ => self.render_buffer(count - 10, value),
         }
@@ -676,7 +717,7 @@ impl<'a> ResponseEncoder<'a> {
     fn render_crc_int_flash(&mut self, crc: u32) -> (usize, Option<u8>) {
         let count = self.count;
         match count {
-            0...1 => self.render_basic_rsp(count, RES_CRCIF),
+            0...1 => self.render_header(count, RES_CRCIF),
             _ => self.render_u32(count - 2, crc),
         }
     }
@@ -684,7 +725,7 @@ impl<'a> ResponseEncoder<'a> {
     fn render_crc_ex_flash(&mut self, crc: u32) -> (usize, Option<u8>) {
         let count = self.count;
         match count {
-            0...1 => self.render_basic_rsp(count, RES_CRCXF),
+            0...1 => self.render_header(count, RES_CRCXF),
             _ => self.render_u32(count - 2, crc),
         }
     }
@@ -692,7 +733,7 @@ impl<'a> ResponseEncoder<'a> {
     fn render_info(&mut self, info: &[u8]) -> (usize, Option<u8>) {
         let count = self.count;
         match count {
-            0...1 => self.render_basic_rsp(count, RES_INFO),
+            0...1 => self.render_header(count, RES_INFO),
             _ => self.render_buffer(count - 2, info),
         }
     }
@@ -723,7 +764,7 @@ impl<'a> ResponseEncoder<'a> {
         }
     }
 
-    fn render_basic_rsp(&mut self, count: usize, cmd: u8) -> (usize, Option<u8>) {
+    fn render_header(&mut self, count: usize, cmd: u8) -> (usize, Option<u8>) {
         match count {
             0 => (1, Some(ESCAPE_CHAR)), // Escape
             1 => (1, Some(cmd)), // Command
@@ -731,6 +772,12 @@ impl<'a> ResponseEncoder<'a> {
         }
     }
 }
+
+// ****************************************************************************
+//
+// Private Impl/Functions/Modules
+//
+// ****************************************************************************
 
 /// Convert a four-byte array to a u32 - little endian.
 fn parse_u32(data: &[u8]) -> u32 {
@@ -887,9 +934,9 @@ mod tests {
         assert_eq!(p.receive(ESCAPE_CHAR), Ok(None)); // Escape
         match p.receive(CMD_WPAGE) {
             Ok(Some(Command::WritePage {
-                address,
-                data: ref page,
-            })) => {
+                        address,
+                        data: ref page,
+                    })) => {
                 assert_eq!(address, 0xDEADBEEF);
                 assert_eq!(page.len(), 512);
                 for i in 0..512 {
@@ -954,6 +1001,8 @@ mod tests {
 
 }
 
+// ****************************************************************************
 //
-// End of file
+// End Of File
 //
+// ****************************************************************************
