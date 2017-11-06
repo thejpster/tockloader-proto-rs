@@ -86,12 +86,12 @@ pub enum Command<'a> {
     /// Get the CRC of a range of external flash. The RX buffer should contain
     /// a four byte address and a four byte range. The result will be a four
     /// byte crc32.
-    CrcExFlash { address: u32, length: u32 },
+    CrcExtFlash { address: u32, length: u32 },
     /// Erase a page in external flash. The RX buffer should contain a 4 byte
     /// address pointing to the start of the 256 byte page.
     EraseExPage { address: u32 },
     /// Initialise the external flash chip. This sets the page size to 256b.
-    ExFlashInit,
+    ExtFlashInit,
     /// Go into an infinite loop with the 32khz clock present on pin PA19
     /// (GP6) this is used for clock calibration.
     ClockOut,
@@ -118,14 +118,14 @@ pub enum Response<'a> {
     BadArguments, // RES_BADARGS
     Ok, // RES_OK
     Unknown, // RES_UNKNOWN
-    ExFlashTimeout, // RES_XFTIMEOUT
-    ExFlashPageError, // RES_XFEPE ??
+    ExtFlashTimeout, // RES_XFTIMEOUT
+    ExtFlashPageError, // RES_XFEPE ??
     CrcRxBuffer { length: u16, crc: u32 }, // RES_CRCRX
     ReadRange { data: &'a [u8] }, // RES_RRANGE
     ExReadRange { data: &'a [u8] }, // RES_XRRANGE
     GetAttr { key: &'a [u8], value: &'a [u8] }, // RES_GATTR
     CrcIntFlash { crc: u32 }, // RES_CRCIF
-    CrcExFlash { crc: u32 }, // RES_CRCXF
+    CrcExtFlash { crc: u32 }, // RES_CRCXF
     Info { info: &'a [u8] }, // RES_INFO
     ChangeBaudFail, // RES_CHANGE_BAUD_FAIL
 }
@@ -136,6 +136,12 @@ pub enum Error {
     UnknownCommand,
     /// We didn't like the arguments given with a command.
     BadArguments,
+    /// The user didn't call `set_payload_len` yet we
+    /// got a response of unbounded length.
+    UnsetLength,
+    /// The user called `set_payload_len` yet we
+    /// got a response of bounded length.
+    SetLength,
 }
 
 /// The `ComandDecoder` takes bytes and gives you `Command`s.
@@ -150,6 +156,7 @@ pub struct ResponseDecoder {
     state: DecoderState,
     buffer: [u8; 520],
     count: usize,
+    needed: Option<usize>,
 }
 
 /// The `CommandEncoder` takes a `Command` and gives you bytes.
@@ -239,7 +246,7 @@ const RES_INFO: u8 = 0x25;
 const RES_CHANGE_BAUD_FAIL: u8 = 0x26;
 
 const MAX_INDEX: u8 = 16;
-const KEY_LEN:usize = 8;
+const KEY_LEN: usize = 8;
 const MAX_ATTR_LEN: usize = 55;
 const INT_PAGE_SIZE: usize = 512;
 const EXT_PAGE_SIZE: usize = 256;
@@ -414,7 +421,7 @@ impl CommandDecoder {
                 if self.count == num_expected_bytes {
                     let address = parse_u32(&self.buffer[0..4]);
                     let length = parse_u32(&self.buffer[4..8]);
-                    Ok(Some(Command::CrcExFlash { address, length }))
+                    Ok(Some(Command::CrcExtFlash { address, length }))
                 } else {
                     Err(Error::BadArguments)
                 }
@@ -428,7 +435,7 @@ impl CommandDecoder {
                     Err(Error::BadArguments)
                 }
             }
-            CMD_XFINIT => Ok(Some(Command::ExFlashInit)),
+            CMD_XFINIT => Ok(Some(Command::ExtFlashInit)),
             CMD_CLKOUT => Ok(Some(Command::ClockOut)),
             CMD_WUSER => {
                 let num_expected_bytes: usize = 8;
@@ -482,6 +489,7 @@ impl ResponseDecoder {
             state: DecoderState::Loading,
             buffer: [0u8; 520],
             count: 0,
+            needed: None,
         }
     }
 
@@ -503,41 +511,174 @@ impl ResponseDecoder {
         }
     }
 
-    fn load_char(&mut self, ch: u8) {
+    /// Set the expected length of an unbounded message. This
+    /// depends entirely on the last command you sent.
+    pub fn set_payload_len(&mut self, length: usize) -> Result<(), Error> {
+        match self.needed {
+            Some(_) => Err(Error::SetLength),
+            None => {
+                self.needed = Some(length + 1);
+                Ok(())
+            }
+        }
+    }
+
+    fn load_char(&mut self, ch: u8) -> Result<Option<Response>, Error> {
         if self.count < self.buffer.len() {
             self.buffer[self.count] = ch;
             self.count = self.count + 1;
+        }
+        if self.needed == Some(self.count) {
+            match self.buffer[0] {
+                RES_CRCRX => {
+                    let length = parse_u16(&self.buffer[1..3]);
+                    let crc = parse_u32(&self.buffer[3..7]);
+                    self.needed = None;
+                    self.count = 0;
+                    Ok(Some(Response::CrcRxBuffer { length, crc }))
+                }
+                RES_RRANGE => {
+                    let data = &self.buffer[1..self.count];
+                    self.needed = None;
+                    self.count = 0;
+                    Ok(Some(Response::ReadRange { data }))
+                }
+                _ => Err(Error::UnknownCommand),
+            }
+        } else {
+            Ok(None)
         }
     }
 
     fn handle_loading(&mut self, ch: u8) -> Result<Option<Response>, Error> {
         if ch == ESCAPE_CHAR {
             self.state = DecoderState::Escape;
+            Ok(None)
         } else {
-            self.load_char(ch);
+            self.load_char(ch)
         }
-        Ok(None)
     }
 
     fn handle_escape(&mut self, ch: u8) -> Result<Option<Response>, Error> {
         self.state = DecoderState::Loading;
-        let result = match ch {
+        match ch {
             ESCAPE_CHAR => {
                 // Double escape means just load an escape
-                self.load_char(ch);
+                self.load_char(ch)
+            }
+            RES_PONG => {
+                self.count = 0;
+                Ok(Some(Response::Pong))
+            }
+            RES_OVERFLOW => {
+                self.count = 0;
+                Ok(Some(Response::Overflow))
+            }
+            RES_BADADDR => {
+                self.count = 0;
+                Ok(Some(Response::BadAddress))
+            }
+            RES_INTERROR => {
+                self.count = 0;
+                Ok(Some(Response::InternalError))
+            }
+            RES_BADARGS => {
+                self.count = 0;
+                Ok(Some(Response::BadArguments))
+            }
+            RES_OK => {
+                self.count = 0;
+                Ok(Some(Response::Ok))
+            }
+            RES_UNKNOWN => {
+                self.count = 0;
+                Ok(Some(Response::Unknown))
+            }
+            RES_XFTIMEOUT => {
+                self.count = 0;
+                Ok(Some(Response::ExtFlashTimeout))
+            }
+            RES_XFEPE => {
+                self.count = 0;
+                Ok(Some(Response::ExtFlashPageError))
+            }
+            RES_CHANGE_BAUD_FAIL => {
+                self.count = 0;
+                Ok(Some(Response::ChangeBaudFail))
+            }
+            RES_CRCRX => {
+                self.set_payload_len(6)?;
+                self.load_char(ch)?;
                 Ok(None)
             }
-            RES_PONG => Ok(Some(Response::Pong)),
-            RES_OVERFLOW => Ok(Some(Response::Overflow)),
+            RES_RRANGE => {
+                if self.needed.is_none() {
+                    Err(Error::UnsetLength)
+                } else {
+                    self.load_char(ch)?;
+                    Ok(None)
+                }
+            }
+            RES_XRRANGE => {
+                if self.needed.is_none() {
+                    Err(Error::UnsetLength)
+                } else {
+                    self.load_char(ch)?;
+                    Ok(None)
+                }
+                // let data = &self.buffer[0..self.count - 1];
+                // Ok(Some(Response::ExReadRange { data }))
+            }
+            RES_GATTR => {
+                self.set_payload_len(9)?;
+                self.load_char(ch)?;
+                Ok(None)
+                // let num_expected_bytes: usize = 9;
+                // if self.count >= num_expected_bytes {
+                //     let key = &self.buffer[0..8];
+                //     let length = self.buffer[8] as usize;
+                //     if self.count > (num_expected_bytes + length) {
+                //         let value = &self.buffer[9..9 + length];
+                //         Ok(Some(Response::GetAttr { key, value }))
+                //     } else {
+                //         Err(Error::BadArguments)
+                //     }
+                // } else {
+                //     Err(Error::BadArguments)
+                // }
+            }
+            RES_CRCIF => {
+                self.set_payload_len(4)?;
+                self.load_char(ch)?;
+                Ok(None)
+                // let num_expected_bytes: usize = 4;
+                // if self.count == num_expected_bytes {
+                //     let crc = parse_u32(&self.buffer[0..4]);
+                //     Ok(Some(Response::CrcIntFlash { crc }))
+                // } else {
+                //     Err(Error::BadArguments)
+                // }
+            }
+            RES_CRCXF => {
+                self.set_payload_len(4)?;
+                self.load_char(ch)?;
+                Ok(None)
+                // let num_expected_bytes: usize = 4;
+                // if self.count == num_expected_bytes {
+                //     let crc = parse_u32(&self.buffer[0..4]);
+                //     Ok(Some(Response::CrcExtFlash { crc }))
+                // } else {
+                //     Err(Error::BadArguments)
+                // }
+            }
+            RES_INFO => {
+                self.set_payload_len(8)?;
+                self.load_char(ch)?;
+                Ok(None)
+                // Info { info: &'a [u8] },
+            }
             _ => Ok(None),
-        };
-        // A response or error signifies the end of the buffer
-        if let Ok(Some(_)) = result {
-            self.count = 0;
-        } else if let Err(_) = result {
-            self.count = 0;
         }
-        result
     }
 }
 
@@ -678,7 +819,7 @@ impl<'a> ResponseEncoder<'a> {
                     return Err(Error::BadArguments);
                 }
             }
-            _ => {},
+            _ => {}
         }
         Ok(ResponseEncoder {
             response: response,
@@ -699,14 +840,14 @@ impl<'a> ResponseEncoder<'a> {
             &Response::BadArguments => self.render_header(count, RES_BADARGS),
             &Response::Ok => self.render_header(count, RES_OK),
             &Response::Unknown => self.render_header(count, RES_UNKNOWN),
-            &Response::ExFlashTimeout => self.render_header(count, RES_XFTIMEOUT),
-            &Response::ExFlashPageError => self.render_header(count, RES_XFEPE),
+            &Response::ExtFlashTimeout => self.render_header(count, RES_XFTIMEOUT),
+            &Response::ExtFlashPageError => self.render_header(count, RES_XFEPE),
             &Response::CrcRxBuffer { length, crc } => self.render_crc_rx_buffer(length, crc),
             &Response::ReadRange { data } => self.render_read_range(data),
             &Response::ExReadRange { data } => self.render_ex_read_range(data),
             &Response::GetAttr { key, value } => self.render_get_attr(key, value),
             &Response::CrcIntFlash { crc } => self.render_crc_int_flash(crc),
-            &Response::CrcExFlash { crc } => self.render_crc_ex_flash(crc),
+            &Response::CrcExtFlash { crc } => self.render_crc_ex_flash(crc),
             &Response::Info { info } => self.render_info(info),
             &Response::ChangeBaudFail => self.render_header(count, RES_CHANGE_BAUD_FAIL),
         };
@@ -742,7 +883,7 @@ impl<'a> ResponseEncoder<'a> {
         let count = self.count;
         match count {
             0...1 => self.render_header(count, RES_RRANGE),
-            x if x <= data.len() + 2 => self.send_byte(data[x - 2]),
+            x if x < data.len() + 2 => self.send_byte(data[x - 2]),
             _ => (0, None),
         }
     }
@@ -1029,42 +1170,134 @@ mod tests {
 
     // Responses
 
-    #[test]
-    fn check_overflow_rsp_decode() {
+    fn check_rsp_generic(response: Response, cmd: u8) {
         let mut p = ResponseDecoder::new();
         assert_eq!(p.receive(ESCAPE_CHAR), Ok(None));
-        match p.receive(RES_OVERFLOW) {
-            Ok(Some(Response::Overflow)) => {}
+        match p.receive(cmd) {
+            Ok(Some(ref x)) if x == &response => {}
             e => panic!("Did not expect: {:?}", e),
         }
-    }
 
-    #[test]
-    fn check_overflow_rsp_encode() {
-        let rsp = Response::Overflow;
-        let mut e = ResponseEncoder::new(&rsp).unwrap();
+        let mut e = ResponseEncoder::new(&response).unwrap();
         assert_eq!(e.next(), Some(ESCAPE_CHAR));
-        assert_eq!(e.next(), Some(RES_OVERFLOW));
+        assert_eq!(e.next(), Some(cmd));
         assert_eq!(e.next(), None);
         assert_eq!(e.next(), None);
     }
 
     #[test]
-    fn check_pong_rsp_decode() {
-        let mut p = ResponseDecoder::new();
-        assert_eq!(p.receive(ESCAPE_CHAR), Ok(None));
-        match p.receive(RES_PONG) {
-            Ok(Some(Response::Pong)) => {}
-            e => panic!("Did not expect: {:?}", e),
-        }
+    fn check_rsp_overflow() {
+        check_rsp_generic(Response::Overflow, RES_OVERFLOW);
     }
 
     #[test]
-    fn check_pong_rsp_encode() {
-        let rsp = Response::Pong;
-        let mut e = ResponseEncoder::new(&rsp).unwrap();
+    fn check_rsp_pong() {
+        check_rsp_generic(Response::Pong, RES_PONG);
+    }
+
+    #[test]
+    fn check_rsp_badaddress() {
+        check_rsp_generic(Response::BadAddress, RES_BADADDR);
+    }
+
+    #[test]
+    fn check_rsp_internalerror() {
+        check_rsp_generic(Response::InternalError, RES_INTERROR);
+    }
+
+    #[test]
+    fn check_rsp_badarguments() {
+        check_rsp_generic(Response::BadArguments, RES_BADARGS);
+    }
+
+    #[test]
+    fn check_rsp_ok() {
+        check_rsp_generic(Response::Ok, RES_OK);
+    }
+
+    #[test]
+    fn check_rsp_unknown() {
+        check_rsp_generic(Response::Unknown, RES_UNKNOWN);
+    }
+
+    #[test]
+    fn check_rsp_exflashtimeout() {
+        check_rsp_generic(Response::ExtFlashTimeout, RES_XFTIMEOUT);
+    }
+
+    #[test]
+    fn check_rsp_exflashpageerror() {
+        check_rsp_generic(Response::ExtFlashPageError, RES_XFEPE);
+    }
+
+    #[test]
+    fn check_rsp_changebaudfail() {
+        check_rsp_generic(Response::ChangeBaudFail, RES_CHANGE_BAUD_FAIL);
+    }
+
+    #[test]
+    fn check_rsp_crc_rx() {
+        let mut p = ResponseDecoder::new();
+        assert_eq!(p.receive(ESCAPE_CHAR), Ok(None));
+        assert_eq!(p.receive(RES_CRCRX), Ok(None));
+        // Length
+        assert_eq!(p.receive(0x34), Ok(None));
+        assert_eq!(p.receive(0x12), Ok(None));
+        // CRC
+        assert_eq!(p.receive(0xEF), Ok(None));
+        assert_eq!(p.receive(0xBE), Ok(None));
+        assert_eq!(p.receive(0xAD), Ok(None));
+        assert_eq!(
+            p.receive(0xDE),
+            Ok(Some(Response::CrcRxBuffer {
+                length: 0x1234,
+                crc: 0xDEADBEEF,
+            }))
+        );
+
+        let r = Response::CrcRxBuffer {
+            length: 0x1234,
+            crc: 0xDEADBEEF,
+        };
+        let mut e = ResponseEncoder::new(&r).unwrap();
         assert_eq!(e.next(), Some(ESCAPE_CHAR));
-        assert_eq!(e.next(), Some(RES_PONG));
+        assert_eq!(e.next(), Some(RES_CRCRX));
+        assert_eq!(e.next(), Some(0x34));
+        assert_eq!(e.next(), Some(0x12));
+        assert_eq!(e.next(), Some(0xEF));
+        assert_eq!(e.next(), Some(0xBE));
+        assert_eq!(e.next(), Some(0xAD));
+        assert_eq!(e.next(), Some(0xDE));
+        assert_eq!(e.next(), None);
+        assert_eq!(e.next(), None);
+    }
+
+
+    #[test]
+    fn check_rsp_rrange() {
+        let mut p = ResponseDecoder::new();
+        p.set_payload_len(4).unwrap();
+        assert_eq!(p.receive(ESCAPE_CHAR), Ok(None));
+        assert_eq!(p.receive(RES_RRANGE), Ok(None));
+        // four bytes of data
+        assert_eq!(p.receive(0x00), Ok(None));
+        assert_eq!(p.receive(0x11), Ok(None));
+        assert_eq!(p.receive(0x22), Ok(None));
+        assert_eq!(
+            p.receive(0x33),
+            Ok(Some(
+                Response::ReadRange { data: &[0x00, 0x11, 0x22, 0x33] },
+            ))
+        );
+
+        let r = Response::ReadRange { data: &[0x00, 0x11, 0x22, 0x33] };
+        let mut e = ResponseEncoder::new(&r).unwrap();
+        assert_eq!(e.next(), Some(ESCAPE_CHAR));
+        assert_eq!(e.next(), Some(RES_RRANGE));
+        assert_eq!(e.next(), Some(0x00));
+        assert_eq!(e.next(), Some(0x11));
+        assert_eq!(e.next(), Some(0x22));
+        assert_eq!(e.next(), Some(0x33));
         assert_eq!(e.next(), None);
         assert_eq!(e.next(), None);
     }
