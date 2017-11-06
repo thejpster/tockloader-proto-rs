@@ -32,7 +32,8 @@ pub enum Command<'a> {
     /// Get info about the bootloader. The result is one byte of length, plus
     /// length bytes of string, followed by 192-length zeroes.
     Info,
-    /// Get the Unique ID. Result is 8 bytes of unique ID.
+    /// Get the Unique ID. Result is 8 bytes of unique ID (but I'm not sure
+    /// what the result code should be).
     Id,
     /// Reset all TX and RX buffers.
     Reset,
@@ -236,6 +237,13 @@ const RES_CRCIF: u8 = 0x23;
 const RES_CRCXF: u8 = 0x24;
 const RES_INFO: u8 = 0x25;
 const RES_CHANGE_BAUD_FAIL: u8 = 0x26;
+
+const MAX_INDEX: u8 = 16;
+const KEY_LEN:usize = 8;
+const MAX_ATTR_LEN: usize = 55;
+const INT_PAGE_SIZE: usize = 512;
+const EXT_PAGE_SIZE: usize = 256;
+const MAX_INFO_LEN: usize = 192;
 
 // ****************************************************************************
 //
@@ -520,6 +528,7 @@ impl ResponseDecoder {
                 Ok(None)
             }
             RES_PONG => Ok(Some(Response::Pong)),
+            RES_OVERFLOW => Ok(Some(Response::Overflow)),
             _ => Ok(None),
         };
         // A response or error signifies the end of the buffer
@@ -537,12 +546,38 @@ impl<'a> CommandEncoder<'a> {
     ///
     /// The encoder takes a reference to a `Command` to encode. The `next` method
     /// will then supply the encoded bytes one at a time.
-    pub fn new(command: &'a Command) -> CommandEncoder<'a> {
-        CommandEncoder {
+    pub fn new(command: &'a Command) -> Result<CommandEncoder<'a>, Error> {
+        // We have to accept slices rather than arrays, so bounds check them
+        // all now to save surprises later.
+        match command {
+            &Command::WritePage { address: _, data } => {
+                if data.len() != INT_PAGE_SIZE {
+                    return Err(Error::BadArguments);
+                }
+            }
+            &Command::WriteExPage { address: _, data } => {
+                if data.len() != EXT_PAGE_SIZE {
+                    return Err(Error::BadArguments);
+                }
+            }
+            &Command::SetAttr { index, key, value } => {
+                if index > MAX_INDEX {
+                    return Err(Error::BadArguments);
+                }
+                if key.len() != KEY_LEN {
+                    return Err(Error::BadArguments);
+                }
+                if value.len() > MAX_ATTR_LEN {
+                    return Err(Error::BadArguments);
+                }
+            }
+            _ => {}
+        };
+        Ok(CommandEncoder {
             command: command,
             count: 0,
             sent_escape: false,
-        }
+        })
     }
 
     /// Supply the next encoded byte. Once all the bytes have been emitted, it
@@ -628,12 +663,28 @@ impl<'a> ResponseEncoder<'a> {
     ///
     /// The encoder takes a reference to a `Command` to encode. The `next` method
     /// will then supply the encoded bytes one at a time.
-    pub fn new(response: &'a Response) -> ResponseEncoder<'a> {
-        ResponseEncoder {
+    pub fn new(response: &'a Response) -> Result<ResponseEncoder<'a>, Error> {
+        match response {
+            &Response::GetAttr { key, value } => {
+                if key.len() != KEY_LEN {
+                    return Err(Error::BadArguments);
+                }
+                if value.len() > MAX_ATTR_LEN {
+                    return Err(Error::BadArguments);
+                }
+            }
+            &Response::Info { info } => {
+                if info.len() > MAX_INFO_LEN {
+                    return Err(Error::BadArguments);
+                }
+            }
+            _ => {},
+        }
+        Ok(ResponseEncoder {
             response: response,
             count: 0,
             sent_escape: false,
-        }
+        })
     }
 
     /// Supply the next encoded byte. Once all the bytes have been emitted, it
@@ -819,7 +870,7 @@ mod tests {
     #[test]
     fn check_cmd_ping_encode() {
         let cmd = Command::Ping;
-        let mut e = CommandEncoder::new(&cmd);
+        let mut e = CommandEncoder::new(&cmd).unwrap();
         assert_eq!(e.next(), Some(ESCAPE_CHAR));
         assert_eq!(e.next(), Some(CMD_PING));
         assert_eq!(e.next(), None);
@@ -839,7 +890,7 @@ mod tests {
     #[test]
     fn check_cmd_info_encode() {
         let cmd = Command::Info;
-        let mut e = CommandEncoder::new(&cmd);
+        let mut e = CommandEncoder::new(&cmd).unwrap();
         assert_eq!(e.next(), Some(ESCAPE_CHAR));
         assert_eq!(e.next(), Some(CMD_INFO));
         assert_eq!(e.next(), None);
@@ -859,7 +910,7 @@ mod tests {
     #[test]
     fn check_cmd_id_encode() {
         let cmd = Command::Id;
-        let mut e = CommandEncoder::new(&cmd);
+        let mut e = CommandEncoder::new(&cmd).unwrap();
         assert_eq!(e.next(), Some(ESCAPE_CHAR));
         assert_eq!(e.next(), Some(CMD_ID));
         assert_eq!(e.next(), None);
@@ -879,7 +930,7 @@ mod tests {
     #[test]
     fn check_cmd_reset_encode() {
         let cmd = Command::Reset;
-        let mut e = CommandEncoder::new(&cmd);
+        let mut e = CommandEncoder::new(&cmd).unwrap();
         assert_eq!(e.next(), Some(ESCAPE_CHAR));
         assert_eq!(e.next(), Some(CMD_RESET));
         assert_eq!(e.next(), None);
@@ -905,7 +956,7 @@ mod tests {
     #[test]
     fn check_cmd_erase_page_encode() {
         let cmd = Command::ErasePage { address: 0xDEADBEEF };
-        let mut e = CommandEncoder::new(&cmd);
+        let mut e = CommandEncoder::new(&cmd).unwrap();
         // 4 byte address, little-endian
         assert_eq!(e.next(), Some(0xEF));
         assert_eq!(e.next(), Some(0xBE));
@@ -950,27 +1001,26 @@ mod tests {
 
     #[test]
     fn check_cmd_write_page_encode() {
-        let buffer: [u8; 5] = [0, 1, 2, 3, 4];
+        let mut buffer = [0xBBu8; 512];
+        buffer[0] = 0xAA;
+        buffer[511] = 0xCC;
         let cmd = Command::WritePage {
             address: 0xDEADBEEF,
             data: &buffer,
         };
-        let mut e = CommandEncoder::new(&cmd);
+        let mut e = CommandEncoder::new(&cmd).unwrap();
         // 4 byte address, little-endian
         assert_eq!(e.next(), Some(0xEF));
         assert_eq!(e.next(), Some(0xBE));
         assert_eq!(e.next(), Some(0xAD));
         assert_eq!(e.next(), Some(0xDE));
-        // 5 bytes of data
-        assert_eq!(e.next(), Some(0x00));
-        assert_eq!(e.next(), Some(0x01));
-        assert_eq!(e.next(), Some(0x02));
-        assert_eq!(e.next(), Some(0x03));
-        assert_eq!(e.next(), Some(0x04));
-        for _ in 0..507 {
-            // Padding up to 512 data bytes in the page
-            assert_eq!(e.next(), Some(0xFF));
+        // first byte of data
+        assert_eq!(e.next(), Some(0xAA));
+        for _ in 1..511 {
+            assert_eq!(e.next(), Some(0xBB));
         }
+        // last byte of data
+        assert_eq!(e.next(), Some(0xCC));
         assert_eq!(e.next(), Some(ESCAPE_CHAR));
         assert_eq!(e.next(), Some(CMD_WPAGE));
         assert_eq!(e.next(), None);
@@ -978,6 +1028,26 @@ mod tests {
     }
 
     // Responses
+
+    #[test]
+    fn check_overflow_rsp_decode() {
+        let mut p = ResponseDecoder::new();
+        assert_eq!(p.receive(ESCAPE_CHAR), Ok(None));
+        match p.receive(RES_OVERFLOW) {
+            Ok(Some(Response::Overflow)) => {}
+            e => panic!("Did not expect: {:?}", e),
+        }
+    }
+
+    #[test]
+    fn check_overflow_rsp_encode() {
+        let rsp = Response::Overflow;
+        let mut e = ResponseEncoder::new(&rsp).unwrap();
+        assert_eq!(e.next(), Some(ESCAPE_CHAR));
+        assert_eq!(e.next(), Some(RES_OVERFLOW));
+        assert_eq!(e.next(), None);
+        assert_eq!(e.next(), None);
+    }
 
     #[test]
     fn check_pong_rsp_decode() {
@@ -992,7 +1062,7 @@ mod tests {
     #[test]
     fn check_pong_rsp_encode() {
         let rsp = Response::Pong;
-        let mut e = ResponseEncoder::new(&rsp);
+        let mut e = ResponseEncoder::new(&rsp).unwrap();
         assert_eq!(e.next(), Some(ESCAPE_CHAR));
         assert_eq!(e.next(), Some(RES_PONG));
         assert_eq!(e.next(), None);
