@@ -542,7 +542,7 @@ impl<'a> CommandEncoder<'a> {
         }
     }
 
-    fn render_buffer(&mut self, idx: usize, data: &[u8]) -> (usize, Option<u8>) {
+    fn render_page(&mut self, idx: usize, data: &[u8]) -> (usize, Option<u8>) {
         if (idx < data.len()) && (idx < 512) {
             self.send_byte(data[idx])
         } else if idx < 512 {
@@ -572,7 +572,7 @@ impl<'a> CommandEncoder<'a> {
         let count = self.count;
         match count {
             0...3 => self.render_u32(count, address),
-            4...515 => self.render_buffer(count - 4, data),
+            4...515 => self.render_page(count - 4, data),
             _ => self.render_basic_cmd(count - 516, CMD_WPAGE),
         }
     }
@@ -633,12 +633,18 @@ impl<'a> ResponseEncoder<'a> {
     }
 
     fn render_crc_rx_buffer(&mut self, length: u16, crc: u32) -> (usize, Option<u8>) {
-        (0, None)
+        let count = self.count;
+        match count {
+            0...1 => self.render_basic_rsp(count, RES_CRCRX),
+            2...3 => self.render_u16(count - 2, length),
+            4...7 => self.render_u32(count - 4, crc),
+            _ => (0, None),
+        }
     }
 
     fn render_read_range(&mut self, data: &[u8]) -> (usize, Option<u8>) {
         let count = self.count;
-        match self.count {
+        match count {
             0...1 => self.render_basic_rsp(count, RES_RRANGE),
             x if x <= data.len() + 2 => self.send_byte(data[x - 2]),
             _ => (0, None),
@@ -647,7 +653,7 @@ impl<'a> ResponseEncoder<'a> {
 
     fn render_ex_read_range(&mut self, data: &[u8]) -> (usize, Option<u8>) {
         let count = self.count;
-        match self.count {
+        match count {
             0...1 => self.render_basic_rsp(count, RES_XRRANGE),
             x if x <= data.len() + 2 => self.send_byte(data[x - 2]),
             _ => (0, None),
@@ -655,19 +661,44 @@ impl<'a> ResponseEncoder<'a> {
     }
 
     fn render_get_attr(&mut self, key: &[u8], value: &[u8]) -> (usize, Option<u8>) {
-        (0, None)
+        let count = self.count;
+        match count {
+            0...1 => self.render_basic_rsp(count, RES_GATTR),
+            2...9 => self.render_buffer(count - 2, key),
+            _ => self.render_buffer(count - 10, value),
+        }
     }
 
     fn render_crc_int_flash(&mut self, crc: u32) -> (usize, Option<u8>) {
-        (0, None)
+        let count = self.count;
+        match count {
+            0...1 => self.render_basic_rsp(count, RES_CRCIF),
+            _ => self.render_u32(count - 2, crc),
+        }
     }
 
     fn render_crc_ex_flash(&mut self, crc: u32) -> (usize, Option<u8>) {
-        (0, None)
+        let count = self.count;
+        match count {
+            0...1 => self.render_basic_rsp(count, RES_CRCXF),
+            _ => self.render_u32(count - 2, crc),
+        }
     }
 
     fn render_info(&mut self, info: &[u8]) -> (usize, Option<u8>) {
-        (0, None)
+        let count = self.count;
+        match count {
+            0...1 => self.render_basic_rsp(count, RES_INFO),
+            _ => self.render_buffer(count - 2, info),
+        }
+    }
+
+    fn render_u16(&mut self, idx: usize, value: u16) -> (usize, Option<u8>) {
+        match idx {
+            0 => self.send_byte(value as u8),
+            1 => self.send_byte((value >> 8) as u8),
+            _ => (0, None),
+        }
     }
 
     fn render_u32(&mut self, idx: usize, value: u32) -> (usize, Option<u8>) {
@@ -681,10 +712,8 @@ impl<'a> ResponseEncoder<'a> {
     }
 
     fn render_buffer(&mut self, idx: usize, data: &[u8]) -> (usize, Option<u8>) {
-        if (idx < data.len()) && (idx < 512) {
+        if idx < data.len() {
             self.send_byte(data[idx])
-        } else if idx < 512 {
-            self.send_byte(0xFF) // pad short data with 0xFFs
         } else {
             (0, None)
         }
