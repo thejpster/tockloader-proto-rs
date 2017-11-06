@@ -11,32 +11,32 @@ const ESCAPE_CHAR: u8 = 0xFC;
 
 const CMD_PING: u8 = 0x01;
 const CMD_INFO: u8 = 0x03;
-// const CMD_ID: u8          = 0x04;
+const CMD_ID: u8 = 0x04;
 const CMD_RESET: u8 = 0x05;
 const CMD_EPAGE: u8 = 0x06;
 const CMD_WPAGE: u8 = 0x07;
-// const CMD_XEBLOCK: u8     = 0x08;
-// const CMD_XWPAGE: u8      = 0x09;
-// const CMD_CRCRX: u8       = 0x10;
-// const CMD_RRANGE: u8      = 0x11;
-// const CMD_XRRANGE: u8     = 0x12;
-// const CMD_SATTR: u8       = 0x13;
-// const CMD_GATTR: u8       = 0x14;
-// const CMD_CRCIF: u8       = 0x15;
-// const CMD_CRCEF: u8       = 0x16;
-// const CMD_XEPAGE: u8      = 0x17;
-// const CMD_XFINIT: u8      = 0x18;
-// const CMD_CLKOUT: u8      = 0x19;
-// const CMD_WUSER: u8       = 0x20;
-// const CMD_CHANGE_BAUD: u8 = 0x21;
+const CMD_XEBLOCK: u8 = 0x08;
+const CMD_XWPAGE: u8 = 0x09;
+const CMD_CRCRX: u8 = 0x10;
+const CMD_RRANGE: u8 = 0x11;
+const CMD_XRRANGE: u8 = 0x12;
+const CMD_SATTR: u8 = 0x13;
+const CMD_GATTR: u8 = 0x14;
+const CMD_CRCIF: u8 = 0x15;
+const CMD_CRCEF: u8 = 0x16;
+const CMD_XEPAGE: u8 = 0x17;
+const CMD_XFINIT: u8 = 0x18;
+const CMD_CLKOUT: u8 = 0x19;
+const CMD_WUSER: u8 = 0x20;
+const CMD_CHANGE_BAUD: u8 = 0x21;
 
 // const RES_OVERFLOW: u8    = 0x10;
 const RES_PONG: u8 = 0x11;
-// const RES_BADADDR: u8     = 0x12;
+const RES_BADADDR: u8 = 0x12;
 // const RES_INTERROR: u8    = 0x13;
 // const RES_BADARGS: u8     = 0x14;
-// const RES_OK: u8          = 0x15;
-// const RES_UNKNOWN: u8     = 0x16;
+const RES_OK: u8 = 0x15;
+const RES_UNKNOWN: u8 = 0x16;
 // const RES_XFTIMEOUT: u8   = 0x17;
 // const RES_XFEPE: u8       = 0x18;
 // const RES_CRCRX: u8       = 0x19;
@@ -59,73 +59,149 @@ pub enum BaudMode {
     Verify, // 0x02
 }
 
-/// Commands and Reponses supported by the protocol
+/// Commands supported by the protocol. A bootloader will decode these and a
+/// flash tool will encode them.
 #[derive(Debug)]
-pub enum CommandReponse<'a> {
-    PingCmd, // CMD_PING
-    InfoCmd, // CMD_INFO
-    ResetCmd, // CMD_RESET
-    ErasePageCmd { address: u32 }, // CMD_EPAGE
-    WritePageCmd { address: u32, data: &'a [u8] }, // CMD_WPAGE
-    EraseExBlockCmd { address: u32 }, // CMD_XEBLOCK
-    WriteExPageCmd { address: u32, data: &'a [u8] }, // CMD_XWPAGE
-    CrcRxBufferCmd, // CMD_CRCRX
-    ReadRangeCmd { address: u32, length: u16 }, // CMD_RRANGE
-    ExReadRangeCmd { address: u32, length: u16 }, // CMD_XRRANGE
-    SetAttrCmd {
+pub enum Command<'a> {
+    /// Send a PING to the bootloader. It will drop its hp buffer and send
+    /// back a PONG.
+    Ping,
+    /// Get info about the bootloader. The result is one byte of length, plus
+    /// length bytes of string, followed by 192-length zeroes.
+    Info,
+    /// Get the Unique ID. Result is 8 bytes of unique ID.
+    Id,
+    /// Reset all TX and RX buffers.
+    Reset,
+    /// Erase a page. The RX buffer should contain the address of the start of
+    /// the 512 byte page. Any non-page-aligned addresses will result in
+    /// RES_BADADDR. This command is not required before writing a page, it is
+    /// just an optimisation. It is particularly quick for already empty pages.
+    ErasePage { address: u32 },
+    /// Write a page in internal flash. The RX buffer should contain the 4
+    /// byte address of the start of the page, followed by 512 bytes of page.
+    WritePage { address: u32, data: &'a [u8] },
+    /// Erase a block of pages in ex flash. The RX buffer should contain the
+    /// address of the start of the block. Each block is 8 pages, so 2048
+    /// bytes.
+    EraseExBlock { address: u32 },
+    /// Write a page to ex flash. The RX buffer should contain the address of
+    /// the start of the 256 byte page, followed by 256 bytes of page.
+    WriteExPage { address: u32, data: &'a [u8] },
+    /// Get the length and CRC of the RX buffer. The response is two bytes of
+    /// little endian length, followed by 4 bytes of crc32.
+    CrcRxBuffer,
+    /// Read a range from internal flash. The RX buffer should contain a 4
+    /// byte address followed by 2 bytes of length. The response will be
+    /// length bytes long.
+    ReadRange { address: u32, length: u16 },
+    /// Read a range from external flash. The RX buffer should contain a 4
+    /// byte address followed by 2 bytes of length. The response will be
+    /// length bytes long.
+    ExReadRange { address: u32, length: u16 },
+    /// Write a payload attribute. The RX buffer should contain a one byte
+    /// index, 8 bytes of key (null padded), one byte of value length, and
+    /// valuelength value bytes. valuelength must be less than or equal to 55.
+    /// The value may contain nulls.
+    ///
+    /// The attribute index must be less than 16.
+    SetAttr {
         index: u8,
         key: [u8; 8],
         value: &'a [u8],
-    }, // CMD_SATTR
-    GetAttrCmd { index: u8 }, // CMD_SATTR
-    CrcIntFlashCmd { address: u32, length: u32 }, // CMD_CRCIF
-    CrcExFlashCmd { address: u32, length: u32 }, // CMD_CRCEF
-    EraseExPageCmd { address: u32 }, // CMD_XEPAGE
-    ExFlashInitCmd, // CMD_XFINIT
-    ClockOutCmd, // CMD_CLKOUT
-    WriteFlashUserPagesCmd { page1: u32, page2: u32 }, // CMD_WUSER
-    ChangeBaudCmd { mode: BaudMode, baud: u32 }, // CMD_CHANGE_BAUD
+    },
+    /// Get a payload attribute. The RX buffer should contain a 1 byte index.
+    /// The result is 8 bytes of key, 1 byte of value length, and 55 bytes of
+    /// potential value. You must discard 55-valuelength bytes from the end
+    /// yourself.
+    GetAttr { index: u8 },
+    /// Get the CRC of a range of internal flash. The RX buffer should contain
+    /// a four byte address and a four byte range. The result will be a four
+    /// byte crc32.
+    CrcIntFlash { address: u32, length: u32 },
+    /// Get the CRC of a range of external flash. The RX buffer should contain
+    /// a four byte address and a four byte range. The result will be a four
+    /// byte crc32.
+    CrcExFlash { address: u32, length: u32 },
+    /// Erase a page in external flash. The RX buffer should contain a 4 byte
+    /// address pointing to the start of the 256 byte page.
+    EraseExPage { address: u32 },
+    /// Initialise the external flash chip. This sets the page size to 256b.
+    ExFlashInit,
+    /// Go into an infinite loop with the 32khz clock present on pin PA19
+    /// (GP6) this is used for clock calibration.
+    ClockOut,
+    /// Write the flash user pages (first 4 bytes is first page, second 4
+    /// bytes is second page, little endian).
+    WriteFlashUserPages { page1: u32, page2: u32 },
+    /// Change the baud rate of the bootloader. The first byte is 0x01 to set
+    /// a new baud rate. The next 4 bytes are the new baud rate. To allow the
+    /// bootloader to verify that the new baud rate works, the host must call
+    /// this command again with the first byte of 0x02 and the next 4 bytes of
+    /// the new baud rate. If the next command does not match this, the
+    /// bootloader will revert to the old baud rate.
+    ChangeBaud { mode: BaudMode, baud: u32 },
 
-    UnknownCmd, // Not seen on the wire
-
-    OverflowRsp, // RES_OVERFLOW
-    PongRsp, // RES_PONG
-    BadAddressRsp, // RES_BADADDR
-    InternalErrorRsp, // RES_INTERROR
-    BadArgumentsRsp, // RES_BADARGS
-    OkRsp, // RES_OK
-    UnknownRsp, // RES_UNKNOWN
-    ExFlashTimeoutRsp, // RES_XFTIMEOUT
-    ExFlashPageErrorRsp, // RES_XFEPE ??
-    CrcRxRsp, // RES_CRCRX
-    ReadRangeRsp, // RES_RRANGE
-    ExReadRangeRsp, // RES_XRRANGE
-    GetAttrRsp, // RES_GATTR
-    CrcIntFlashRsp, // RES_CRCIF
-    CrcExFlashRsp, // RES_CRCXF
-    InfoRsp, // RES_INFO
-    ChangeBaudFailRsp, // RES_CHANGE_BAUD_FAIL
+    /// This is not seen on the wire but may be returned if we don't
+    /// understand something we did receive on the wire.
+    Unknown,
 }
 
-/// The `Decoder` takes bytes and gives you `CommandReponse`s.
-pub struct Decoder {
+/// Reponses supported by the protocol. A bootloader will encode these
+/// and a flash tool will decode them.
+#[derive(Debug)]
+pub enum Response<'a> {
+    Overflow, // RES_OVERFLOW
+    Pong, // RES_PONG
+    BadAddress, // RES_BADADDR
+    InternalError, // RES_INTERROR
+    BadArguments, // RES_BADARGS
+    Ok, // RES_OK
+    Unknown, // RES_UNKNOWN
+    ExFlashTimeout, // RES_XFTIMEOUT
+    ExFlashPageError, // RES_XFEPE ??
+    CrcRx, // RES_CRCRX
+    ReadRange { data: &'a [u8] }, // RES_RRANGE
+    ExReadRange, // RES_XRRANGE
+    GetAttr, // RES_GATTR
+    CrcIntFlash, // RES_CRCIF
+    CrcExFlash, // RES_CRCXF
+    Info, // RES_INFO
+    ChangeBaudFail, // RES_CHANGE_BAUD_FAIL
+}
+
+/// The `ComandDecoder` takes bytes and gives you `Command`s.
+pub struct CommandDecoder {
     state: DecoderState,
     buffer: [u8; 520],
     count: usize,
 }
 
-/// The `Encoder` takes a `CommandReponse` and gives you bytes.
-pub struct Encoder<'a> {
-    command: &'a CommandReponse<'a>,
+/// The `ResponseDecoder` takes bytes and gives you `Responses`s.
+pub struct ResponseDecoder {
+    state: DecoderState,
+    buffer: [u8; 520],
     count: usize,
 }
 
-impl Decoder {
-    /// Create a new `Decoder`.
+/// The `CommandEncoder` takes a `Command` and gives you bytes.
+pub struct CommandEncoder<'a> {
+    command: &'a Command<'a>,
+    count: usize,
+}
+
+/// The `ResponseEncoder` takes a `Response` and gives you bytes.
+pub struct ResponseEncoder<'a> {
+    response: &'a Response<'a>,
+    count: usize,
+}
+
+impl CommandDecoder {
+    /// Create a new `CommandDecoder`.
     ///
     /// The decoder is fed bytes with the `receive` method.
-    pub fn new() -> Decoder {
-        Decoder {
+    pub fn new() -> CommandDecoder {
+        CommandDecoder {
             state: DecoderState::Loading,
             buffer: [0u8; 520],
             count: 0,
@@ -141,9 +217,9 @@ impl Decoder {
     ///
     /// The decoder is fed bytes with the `receive` method. If not enough
     /// bytes have been seen, this function returns `None`. Once enough bytes
-    /// have been seen, it returns `Some(CommandResponse)` containing the
+    /// have been seen, it returns `Some(Command)` containing the
     /// decoded Command (or Response).
-    pub fn receive(&mut self, ch: u8) -> Option<CommandReponse> {
+    pub fn receive(&mut self, ch: u8) -> Option<Command> {
         match self.state {
             DecoderState::Loading => self.handle_loading(ch),
             DecoderState::Escape => self.handle_escape(ch),
@@ -157,7 +233,7 @@ impl Decoder {
         }
     }
 
-    fn handle_loading(&mut self, ch: u8) -> Option<CommandReponse> {
+    fn handle_loading(&mut self, ch: u8) -> Option<Command> {
         if ch == ESCAPE_CHAR {
             self.state = DecoderState::Escape;
         } else {
@@ -166,7 +242,7 @@ impl Decoder {
         None
     }
 
-    fn handle_escape(&mut self, ch: u8) -> Option<CommandReponse> {
+    fn handle_escape(&mut self, ch: u8) -> Option<Command> {
         self.state = DecoderState::Loading;
         let result = match ch {
             ESCAPE_CHAR => {
@@ -174,19 +250,19 @@ impl Decoder {
                 self.load_char(ch);
                 None
             }
-            CMD_PING => Some(CommandReponse::PingCmd),
-            RES_PONG => Some(CommandReponse::PongRsp),
-            CMD_INFO => Some(CommandReponse::InfoCmd),
-            CMD_RESET => Some(CommandReponse::ResetCmd),
+            CMD_PING => Some(Command::Ping),
+            CMD_INFO => Some(Command::Info),
+            CMD_ID => Some(Command::Id),
+            CMD_RESET => Some(Command::Reset),
             CMD_EPAGE => {
                 let num_expected_bytes: usize = 4;
                 if self.count >= num_expected_bytes {
                     // Little-endian address in buffer
                     let start = self.count - num_expected_bytes;
-                    let addr = Self::parse_u32(&self.buffer[start..start + 4]);
-                    Some(CommandReponse::ErasePageCmd { address: addr })
+                    let address = parse_u32(&self.buffer[start..start + 4]);
+                    Some(Command::ErasePage { address })
                 } else {
-                    Some(CommandReponse::UnknownCmd)
+                    Some(Command::Unknown)
                 }
             }
             CMD_WPAGE => {
@@ -195,44 +271,139 @@ impl Decoder {
                     // Little-endian address in buffer
                     let start = self.count - num_expected_bytes;
                     let payload = &self.buffer[start..start + num_expected_bytes];
-                    let addr = Self::parse_u32(&payload[0..4]);
-                    Some(CommandReponse::WritePageCmd {
-                        address: addr,
+                    let address = parse_u32(&payload[0..4]);
+                    Some(Command::WritePage {
+                        address: address,
                         data: &payload[4..num_expected_bytes],
                     })
                 } else {
-                    Some(CommandReponse::UnknownCmd)
+                    Some(Command::Unknown)
+                }
+            }
+            CMD_XEBLOCK => {
+                let num_expected_bytes: usize = 4;
+                if self.count >= num_expected_bytes {
+                    // Little-endian address in buffer
+                    let start = self.count - num_expected_bytes;
+                    let address = parse_u32(&self.buffer[start..start + 4]);
+                    Some(Command::EraseExBlock { address })
+                } else {
+                    Some(Command::Unknown)
+                }
+            }
+            CMD_XWPAGE => {
+                let num_expected_bytes: usize = 512 + 4;
+                if self.count >= num_expected_bytes {
+                    // Little-endian address in buffer
+                    let start = self.count - num_expected_bytes;
+                    let payload = &self.buffer[start..start + num_expected_bytes];
+                    let address = parse_u32(&payload[0..4]);
+                    Some(Command::WriteExPage {
+                        address: address,
+                        data: &payload[4..num_expected_bytes],
+                    })
+                } else {
+                    Some(Command::Unknown)
+                }
+            }
+            CMD_CRCRX => Some(Command::CrcRxBuffer),
+            CMD_RRANGE => {
+                let num_expected_bytes: usize = 6;
+                if self.count >= num_expected_bytes {
+                    // Little-endian address in buffer
+                    let start = self.count - num_expected_bytes;
+                    let address = parse_u32(&self.buffer[start..start + 4]);
+                    let length = parse_u16(&self.buffer[start + 4..start + 6]);
+                    Some(Command::ReadRange {
+                        address: address,
+                        length: length,
+                    })
+                } else {
+                    Some(Command::Unknown)
                 }
             }
             _ => None,
         };
+        // A command signifies the end of the buffer
         if result.is_some() {
             self.count = 0;
         }
         result
     }
+}
 
-    fn parse_u32(data: &[u8]) -> u32 {
-        println!("Parsing: {:?}", data);
-        let mut result: u32 = 0;
-        result += data[3] as u32;
-        result <<= 8;
-        result += data[2] as u32;
-        result <<= 8;
-        result += data[1] as u32;
-        result <<= 8;
-        result += data[0] as u32;
+impl ResponseDecoder {
+    /// Create a new `ResponseDecoder`.
+    ///
+    /// The decoder is fed bytes with the `receive` method.
+    pub fn new() -> ResponseDecoder {
+        ResponseDecoder {
+            state: DecoderState::Loading,
+            buffer: [0u8; 520],
+            count: 0,
+        }
+    }
+
+    /// Empty the RX buffer.
+    pub fn reset(&mut self) {
+        self.count = 0;
+    }
+
+    /// Process incoming bytes.
+    ///
+    /// The decoder is fed bytes with the `receive` method. If not enough
+    /// bytes have been seen, this function returns `None`. Once enough bytes
+    /// have been seen, it returns `Some(Response)` containing the
+    /// decoded Response.
+    pub fn receive(&mut self, ch: u8) -> Option<Response> {
+        match self.state {
+            DecoderState::Loading => self.handle_loading(ch),
+            DecoderState::Escape => self.handle_escape(ch),
+        }
+    }
+
+    fn load_char(&mut self, ch: u8) {
+        if self.count < self.buffer.len() {
+            self.buffer[self.count] = ch;
+            self.count = self.count + 1;
+        }
+    }
+
+    fn handle_loading(&mut self, ch: u8) -> Option<Response> {
+        if ch == ESCAPE_CHAR {
+            self.state = DecoderState::Escape;
+        } else {
+            self.load_char(ch);
+        }
+        None
+    }
+
+    fn handle_escape(&mut self, ch: u8) -> Option<Response> {
+        self.state = DecoderState::Loading;
+        let result = match ch {
+            ESCAPE_CHAR => {
+                // Double escape means just load an escape
+                self.load_char(ch);
+                None
+            }
+            RES_PONG => Some(Response::Pong),
+            _ => None,
+        };
+        // A command signifies the end of the buffer
+        if result.is_some() {
+            self.count = 0;
+        }
         result
     }
 }
 
-impl<'a> Encoder<'a> {
-    /// Create a new `Encoder`.
+impl<'a> CommandEncoder<'a> {
+    /// Create a new `CommandEncoder`.
     ///
-    /// The encoder takes a reference to a `CommandResponse` to encode. The `next` method
+    /// The encoder takes a reference to a `Command` to encode. The `next` method
     /// will then supply the encoded bytes one at a time.
-    pub fn new(command: &'a CommandReponse) -> Encoder<'a> {
-        Encoder {
+    pub fn new(command: &'a Command) -> CommandEncoder<'a> {
+        CommandEncoder {
             command: command,
             count: 0,
         }
@@ -242,18 +413,12 @@ impl<'a> Encoder<'a> {
     /// returns `None` forevermore.
     pub fn next(&mut self) -> Option<u8> {
         let (inc, result) = match self.command {
-            &CommandReponse::PingCmd => self.render_ping_cmd(),
-            &CommandReponse::InfoCmd => self.render_info_cmd(),
-            &CommandReponse::ResetCmd => self.render_reset_cmd(),
-            &CommandReponse::ErasePageCmd { address } => self.render_erasepage_cmd(address),
-            &CommandReponse::WritePageCmd { address, data } => {
-                self.render_writepage_cmd(address, data)
-            }
-            &CommandReponse::UnknownCmd => self.render_unknown_cmd(),
-            &CommandReponse::PongRsp => self.render_pong_rsp(),
-            &CommandReponse::OkRsp => self.render_ok_rsp(),
-            &CommandReponse::BadAddressRsp => self.render_badaddress_rsp(),
-            &CommandReponse::UnknownRsp => self.render_unknown_rsp(),
+            &Command::Ping => Self::render_basic_cmd(self.count, CMD_PING),
+            &Command::Info => Self::render_basic_cmd(self.count, CMD_INFO),
+            &Command::Id => Self::render_basic_cmd(self.count, CMD_ID),
+            &Command::Reset => Self::render_basic_cmd(self.count, CMD_RESET),
+            &Command::ErasePage { address } => self.render_erasepage_cmd(address),
+            &Command::WritePage { address, data } => self.render_writepage_cmd(address, data),
             _ => unimplemented!("Not implemented"),
         };
         self.count = self.count + inc;
@@ -282,74 +447,86 @@ impl<'a> Encoder<'a> {
         }
     }
 
-    pub fn render_ping_cmd(&mut self) -> (usize, Option<u8>) {
-        match self.count {
+    fn render_basic_cmd(count: usize, cmd: u8) -> (usize, Option<u8>) {
+        match count {
             0 => (1, Some(ESCAPE_CHAR)), // Escape
-            1 => (1, Some(CMD_PING)), // Command
+            1 => (1, Some(cmd)), // Command
             _ => (0, None),
         }
     }
 
-    pub fn render_info_cmd(&mut self) -> (usize, Option<u8>) {
-        match self.count {
-            0 => (1, Some(ESCAPE_CHAR)), // Escape
-            1 => (1, Some(CMD_INFO)), // Command
-            _ => (0, None),
-        }
-    }
-
-    pub fn render_reset_cmd(&mut self) -> (usize, Option<u8>) {
-        match self.count {
-            0 => (1, Some(ESCAPE_CHAR)), // Escape
-            1 => (1, Some(CMD_RESET)), // Command
-            _ => (0, None),
-        }
-    }
-
-    pub fn render_erasepage_cmd(&mut self, address: u32) -> (usize, Option<u8>) {
+    fn render_erasepage_cmd(&mut self, address: u32) -> (usize, Option<u8>) {
         match self.count {
             0...3 => Self::render_u32(self.count, address),
-            4 => (1, Some(ESCAPE_CHAR)), // Escape
-            5 => (1, Some(CMD_EPAGE)), // Command
-            _ => (0, None),
+            _ => Self::render_basic_cmd(self.count - 4, CMD_EPAGE),
         }
     }
 
-    pub fn render_writepage_cmd(&mut self, address: u32, data: &[u8]) -> (usize, Option<u8>) {
+    fn render_writepage_cmd(&mut self, address: u32, data: &[u8]) -> (usize, Option<u8>) {
         match self.count {
             0...3 => Self::render_u32(self.count, address),
             4...515 => Self::render_buffer(self.count - 4, data),
-            516 => (1, Some(ESCAPE_CHAR)), // Escape
-            517 => (1, Some(CMD_WPAGE)), // Command
-            _ => (0, None),
+            _ => Self::render_basic_cmd(self.count - 516, CMD_WPAGE),
         }
-    }
-
-    pub fn render_unknown_cmd(&mut self) -> (usize, Option<u8>) {
-        (0, None)
-    }
-
-    pub fn render_pong_rsp(&mut self) -> (usize, Option<u8>) {
-        match self.count {
-            0 => (1, Some(ESCAPE_CHAR)), // Escape
-            1 => (1, Some(RES_PONG)), // Response
-            _ => (0, None),
-        }
-    }
-
-    pub fn render_ok_rsp(&mut self) -> (usize, Option<u8>) {
-        (0, None)
-    }
-
-    pub fn render_badaddress_rsp(&mut self) -> (usize, Option<u8>) {
-        (0, None)
-    }
-
-    pub fn render_unknown_rsp(&mut self) -> (usize, Option<u8>) {
-        (0, None)
     }
 }
 
+impl<'a> ResponseEncoder<'a> {
+    /// Create a new `ResponseEncoder`.
+    ///
+    /// The encoder takes a reference to a `Command` to encode. The `next` method
+    /// will then supply the encoded bytes one at a time.
+    pub fn new(response: &'a Response) -> ResponseEncoder<'a> {
+        ResponseEncoder {
+            response: response,
+            count: 0,
+        }
+    }
+
+    /// Supply the next encoded byte. Once all the bytes have been emitted, it
+    /// returns `None` forevermore.
+    pub fn next(&mut self) -> Option<u8> {
+        let (inc, result) = match self.response {
+            &Response::Pong => Self::render_basic_rsp(self.count, RES_PONG),
+            &Response::Ok => Self::render_basic_rsp(self.count, RES_OK),
+            &Response::BadAddress => Self::render_basic_rsp(self.count, RES_BADADDR),
+            &Response::Unknown => Self::render_basic_rsp(self.count, RES_UNKNOWN),
+            _ => unimplemented!("Not implemented"),
+        };
+        self.count = self.count + inc;
+        result
+    }
+
+    fn render_u32(idx: usize, value: u32) -> (usize, Option<u8>) {
+        println!("Render u32 {} {}", idx, value);
+        match idx {
+            0 => (1, Some(value as u8)),
+            1 => (1, Some((value >> 8) as u8)),
+            2 => (1, Some((value >> 16) as u8)),
+            3 => (1, Some((value >> 24) as u8)),
+            _ => (0, None),
+        }
+    }
+
+    fn render_buffer(idx: usize, data: &[u8]) -> (usize, Option<u8>) {
+        println!("Render buffer {}", idx);
+        if (idx < data.len()) && (idx < 512) {
+            (1, Some(data[idx]))
+        } else if idx < 512 {
+            (1, Some(0xFF)) // pad short data with 0xFFs
+        } else {
+            (0, None)
+        }
+    }
+
+    fn render_basic_rsp(count: usize, cmd: u8) -> (usize, Option<u8>) {
+        match count {
+            0 => (1, Some(ESCAPE_CHAR)), // Escape
+            1 => (1, Some(cmd)), // Command
+            _ => (0, None),
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -357,7 +534,7 @@ mod tests {
 
     #[test]
     fn check_ping_cmd_decode() {
-        let mut p = Decoder::new();
+        let mut p = CommandDecoder::new();
         {
             // Garbage should be ignored
             let o = p.receive(0xFF);
@@ -369,15 +546,15 @@ mod tests {
         }
         let o = p.receive(CMD_PING);
         match o.unwrap() {
-            CommandReponse::PingCmd => {}
+            Command::Ping => {}
             e => panic!("Did not expect: {:?}", e),
         }
     }
 
     #[test]
     fn check_ping_cmd_encode() {
-        let cmd = CommandReponse::PingCmd;
-        let mut e = Encoder::new(&cmd);
+        let cmd = Command::Ping;
+        let mut e = CommandEncoder::new(&cmd);
         assert_eq!(e.next(), Some(ESCAPE_CHAR));
         assert_eq!(e.next(), Some(CMD_PING));
         assert_eq!(e.next(), None);
@@ -386,7 +563,7 @@ mod tests {
 
     #[test]
     fn check_pong_rsp_decode() {
-        let mut p = Decoder::new();
+        let mut p = ResponseDecoder::new();
         {
             // Garbage should be ignored
             let o = p.receive(0xFF);
@@ -398,15 +575,15 @@ mod tests {
         }
         let o = p.receive(RES_PONG);
         match o.unwrap() {
-            CommandReponse::PongRsp => {}
+            Response::Pong => {}
             e => panic!("Did not expect: {:?}", e),
         }
     }
 
     #[test]
     fn check_pong_rsp_encode() {
-        let cmd = CommandReponse::PongRsp;
-        let mut e = Encoder::new(&cmd);
+        let rsp = Response::Pong;
+        let mut e = ResponseEncoder::new(&rsp);
         assert_eq!(e.next(), Some(ESCAPE_CHAR));
         assert_eq!(e.next(), Some(RES_PONG));
         assert_eq!(e.next(), None);
@@ -415,7 +592,7 @@ mod tests {
 
     #[test]
     fn check_info_cmd_decode() {
-        let mut p = Decoder::new();
+        let mut p = CommandDecoder::new();
         {
             let o = p.receive(0xFF);
             assert!(o.is_none());
@@ -426,15 +603,15 @@ mod tests {
         }
         let o = p.receive(CMD_INFO);
         match o.unwrap() {
-            CommandReponse::InfoCmd => {}
+            Command::Info => {}
             e => panic!("Did not expect: {:?}", e),
         }
     }
 
     #[test]
     fn check_info_cmd_encode() {
-        let cmd = CommandReponse::InfoCmd;
-        let mut e = Encoder::new(&cmd);
+        let cmd = Command::Info;
+        let mut e = CommandEncoder::new(&cmd);
         assert_eq!(e.next(), Some(ESCAPE_CHAR));
         assert_eq!(e.next(), Some(CMD_INFO));
         assert_eq!(e.next(), None);
@@ -443,7 +620,7 @@ mod tests {
 
     #[test]
     fn check_write_page_cmd_decode() {
-        let mut p = Decoder::new();
+        let mut p = CommandDecoder::new();
         p.receive(0xEF);
         p.receive(0xBE);
         p.receive(0xAD);
@@ -458,11 +635,11 @@ mod tests {
         p.receive(ESCAPE_CHAR); // Escape
         let o = p.receive(CMD_WPAGE); // WriteFlash
         match o.unwrap() {
-            CommandReponse::WritePageCmd {
-                address: addr,
+            Command::WritePage {
+                address: address,
                 data: ref page,
             } => {
-                assert_eq!(addr, 0xDEADBEEF);
+                assert_eq!(address, 0xDEADBEEF);
                 assert_eq!(page.len(), 512);
                 for i in 0..512 {
                     let datum = i as u8;
@@ -476,11 +653,11 @@ mod tests {
     #[test]
     fn check_write_page_cmd_encode() {
         let buffer: [u8; 5] = [0, 1, 2, 3, 4];
-        let cmd = CommandReponse::WritePageCmd {
+        let cmd = Command::WritePage {
             address: 0xDEADBEEF,
             data: &buffer,
         };
-        let mut e = Encoder::new(&cmd);
+        let mut e = CommandEncoder::new(&cmd);
         // 4 byte address, little-endian
         assert_eq!(e.next(), Some(0xEF));
         assert_eq!(e.next(), Some(0xBE));
@@ -504,7 +681,7 @@ mod tests {
 
     #[test]
     fn check_erase_page_cmd_decode() {
-        let mut p = Decoder::new();
+        let mut p = CommandDecoder::new();
         p.receive(0xEF);
         p.receive(0xBE);
         p.receive(0xAD);
@@ -512,8 +689,8 @@ mod tests {
         p.receive(ESCAPE_CHAR); // Escape
         let o = p.receive(CMD_EPAGE); // ErasePage
         match o.unwrap() {
-            CommandReponse::ErasePageCmd { address: addr } => {
-                assert_eq!(addr, 0xDEADBEEF);
+            Command::ErasePage { address } => {
+                assert_eq!(address, 0xDEADBEEF);
             }
             e => panic!("Did not expect: {:?}", e),
         }
@@ -521,8 +698,8 @@ mod tests {
 
     #[test]
     fn check_erase_page_cmd_encode() {
-        let cmd = CommandReponse::ErasePageCmd { address: 0xDEADBEEF };
-        let mut e = Encoder::new(&cmd);
+        let cmd = Command::ErasePage { address: 0xDEADBEEF };
+        let mut e = CommandEncoder::new(&cmd);
         // 4 byte address, little-endian
         assert_eq!(e.next(), Some(0xEF));
         assert_eq!(e.next(), Some(0xBE));
@@ -536,7 +713,7 @@ mod tests {
 
     #[test]
     fn check_reset_cmd_decode() {
-        let mut p = Decoder::new();
+        let mut p = CommandDecoder::new();
         {
             // Garbage should be ignored
             let o = p.receive(0xFF);
@@ -548,20 +725,74 @@ mod tests {
         }
         let o = p.receive(CMD_RESET);
         match o.unwrap() {
-            CommandReponse::ResetCmd => {}
+            Command::Reset => {}
             e => panic!("Did not expect: {:?}", e),
         }
     }
 
     #[test]
     fn check_reset_cmd_encode() {
-        let cmd = CommandReponse::ResetCmd;
-        let mut e = Encoder::new(&cmd);
+        let cmd = Command::Reset;
+        let mut e = CommandEncoder::new(&cmd);
         assert_eq!(e.next(), Some(ESCAPE_CHAR));
         assert_eq!(e.next(), Some(CMD_RESET));
         assert_eq!(e.next(), None);
         assert_eq!(e.next(), None);
     }
 
+    #[test]
+    fn check_id_cmd_decode() {
+        let mut p = CommandDecoder::new();
+        {
+            // Garbage should be ignored
+            let o = p.receive(0xFF);
+            assert!(o.is_none());
+        }
+        {
+            let o = p.receive(ESCAPE_CHAR);
+            assert!(o.is_none());
+        }
+        let o = p.receive(CMD_ID);
+        match o.unwrap() {
+            Command::Id => {}
+            e => panic!("Did not expect: {:?}", e),
+        }
+    }
 
+    #[test]
+    fn check_id_cmd_encode() {
+        let cmd = Command::Id;
+        let mut e = CommandEncoder::new(&cmd);
+        assert_eq!(e.next(), Some(ESCAPE_CHAR));
+        assert_eq!(e.next(), Some(CMD_ID));
+        assert_eq!(e.next(), None);
+        assert_eq!(e.next(), None);
+    }
 }
+
+
+/// Convert a four-byte array to a u32 - little endian.
+fn parse_u32(data: &[u8]) -> u32 {
+    let mut result: u32 = 0;
+    result += data[3] as u32;
+    result <<= 8;
+    result += data[2] as u32;
+    result <<= 8;
+    result += data[1] as u32;
+    result <<= 8;
+    result += data[0] as u32;
+    result
+}
+
+/// Convert a two-byte array to a u16 - little-endian.
+fn parse_u16(data: &[u8]) -> u16 {
+    let mut result: u16 = 0;
+    result += data[1] as u16;
+    result <<= 8;
+    result += data[0] as u16;
+    result
+}
+
+//
+// End of file
+//
