@@ -53,7 +53,7 @@ enum DecoderState {
     Escape,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub enum BaudMode {
     Set, // 0x01
     Verify, // 0x02
@@ -61,7 +61,7 @@ pub enum BaudMode {
 
 /// Commands supported by the protocol. A bootloader will decode these and a
 /// flash tool will encode them.
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum Command<'a> {
     /// Send a PING to the bootloader. It will drop its hp buffer and send
     /// back a PONG.
@@ -141,19 +141,11 @@ pub enum Command<'a> {
     /// the new baud rate. If the next command does not match this, the
     /// bootloader will revert to the old baud rate.
     ChangeBaud { mode: BaudMode, baud: u32 },
-
-    /// This is not seen on the wire but may be returned if we don't
-    /// understand something we did receive on the wire.
-    Unknown,
-
-    /// This is not seen on the wire, but may be returned if we
-    /// don't like the arguments for a command.
-    BadArguments,
 }
 
 /// Reponses supported by the protocol. A bootloader will encode these
 /// and a flash tool will decode them.
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum Response<'a> {
     Overflow, // RES_OVERFLOW
     Pong, // RES_PONG
@@ -172,6 +164,14 @@ pub enum Response<'a> {
     CrcExFlash { crc: u32 }, // RES_CRCXF
     Info { info: &'a [u8] }, // RES_INFO
     ChangeBaudFail, // RES_CHANGE_BAUD_FAIL
+}
+
+#[derive(Debug, PartialEq)]
+pub enum Error {
+    /// We got a command we didn't understand.
+    UnknownCommand,
+    /// We didn't like the arguments given with a command.
+    BadArguments,
 }
 
 /// The `ComandDecoder` takes bytes and gives you `Command`s.
@@ -223,9 +223,9 @@ impl CommandDecoder {
     ///
     /// The decoder is fed bytes with the `receive` method. If not enough
     /// bytes have been seen, this function returns `None`. Once enough bytes
-    /// have been seen, it returns `Some(Command)` containing the
-    /// decoded Command (or Response).
-    pub fn receive(&mut self, ch: u8) -> Option<Command> {
+    /// have been seen, it returns `Ok(Some(Command))` containing the decoded
+    /// Command. It returns `Err` if it doesn't like the byte received.
+    pub fn receive(&mut self, ch: u8) -> Result<Option<Command>, Error> {
         match self.state {
             DecoderState::Loading => self.handle_loading(ch),
             DecoderState::Escape => self.handle_escape(ch),
@@ -239,34 +239,34 @@ impl CommandDecoder {
         }
     }
 
-    fn handle_loading(&mut self, ch: u8) -> Option<Command> {
+    fn handle_loading(&mut self, ch: u8) -> Result<Option<Command>, Error> {
         if ch == ESCAPE_CHAR {
             self.state = DecoderState::Escape;
         } else {
             self.load_char(ch);
         }
-        None
+        Ok(None)
     }
 
-    fn handle_escape(&mut self, ch: u8) -> Option<Command> {
+    fn handle_escape(&mut self, ch: u8) -> Result<Option<Command>, Error> {
         self.state = DecoderState::Loading;
-        let result = match ch {
+        let result: Result<Option<Command>, Error> = match ch {
             ESCAPE_CHAR => {
                 // Double escape means just load an escape
                 self.load_char(ch);
-                None
+                Ok(None)
             }
-            CMD_PING => Some(Command::Ping),
-            CMD_INFO => Some(Command::Info),
-            CMD_ID => Some(Command::Id),
-            CMD_RESET => Some(Command::Reset),
+            CMD_PING => Ok(Some(Command::Ping)),
+            CMD_INFO => Ok(Some(Command::Info)),
+            CMD_ID => Ok(Some(Command::Id)),
+            CMD_RESET => Ok(Some(Command::Reset)),
             CMD_EPAGE => {
                 let num_expected_bytes: usize = 4;
                 if self.count == num_expected_bytes {
                     let address = parse_u32(&self.buffer[0..4]);
-                    Some(Command::ErasePage { address })
+                    Ok(Some(Command::ErasePage { address }))
                 } else {
-                    Some(Command::BadArguments)
+                    Err(Error::BadArguments)
                 }
             }
             CMD_WPAGE => {
@@ -274,21 +274,21 @@ impl CommandDecoder {
                 if self.count == num_expected_bytes {
                     let payload = &self.buffer[0..num_expected_bytes];
                     let address = parse_u32(&payload[0..4]);
-                    Some(Command::WritePage {
+                    Ok(Some(Command::WritePage {
                         address,
                         data: &payload[4..num_expected_bytes],
-                    })
+                    }))
                 } else {
-                    Some(Command::BadArguments)
+                    Err(Error::BadArguments)
                 }
             }
             CMD_XEBLOCK => {
                 let num_expected_bytes: usize = 4;
                 if self.count == num_expected_bytes {
                     let address = parse_u32(&self.buffer[0..4]);
-                    Some(Command::EraseExBlock { address })
+                    Ok(Some(Command::EraseExBlock { address }))
                 } else {
-                    Some(Command::BadArguments)
+                    Err(Error::BadArguments)
                 }
             }
             CMD_XWPAGE => {
@@ -296,23 +296,23 @@ impl CommandDecoder {
                 if self.count == num_expected_bytes {
                     let payload = &self.buffer[0..num_expected_bytes];
                     let address = parse_u32(&payload[0..4]);
-                    Some(Command::WriteExPage {
+                    Ok(Some(Command::WriteExPage {
                         address,
                         data: &payload[4..num_expected_bytes],
-                    })
+                    }))
                 } else {
-                    Some(Command::BadArguments)
+                    Err(Error::BadArguments)
                 }
             }
-            CMD_CRCRX => Some(Command::CrcRxBuffer),
+            CMD_CRCRX => Ok(Some(Command::CrcRxBuffer)),
             CMD_RRANGE => {
                 let num_expected_bytes: usize = 6;
                 if self.count == num_expected_bytes {
                     let address = parse_u32(&self.buffer[0..4]);
                     let length = parse_u16(&self.buffer[4..6]);
-                    Some(Command::ReadRange { address, length })
+                    Ok(Some(Command::ReadRange { address, length }))
                 } else {
-                    Some(Command::BadArguments)
+                    Err(Error::BadArguments)
                 }
             }
             CMD_XRRANGE => {
@@ -320,9 +320,9 @@ impl CommandDecoder {
                 if self.count == num_expected_bytes {
                     let address = parse_u32(&self.buffer[0..4]);
                     let length = parse_u16(&self.buffer[4..6]);
-                    Some(Command::ExReadRange { address, length })
+                    Ok(Some(Command::ExReadRange { address, length }))
                 } else {
-                    Some(Command::BadArguments)
+                    Err(Error::BadArguments)
                 }
             }
             CMD_SATTR => {
@@ -333,21 +333,21 @@ impl CommandDecoder {
                     let length = self.buffer[9] as usize;
                     if self.count > (num_expected_bytes + length) {
                         let value = &self.buffer[10..10 + length];
-                        Some(Command::SetAttr { index, key, value })
+                        Ok(Some(Command::SetAttr { index, key, value }))
                     } else {
-                        Some(Command::BadArguments)
+                        Err(Error::BadArguments)
                     }
                 } else {
-                    Some(Command::BadArguments)
+                    Err(Error::BadArguments)
                 }
             }
             CMD_GATTR => {
                 let num_expected_bytes: usize = 1;
                 if self.count == num_expected_bytes {
                     let index = self.buffer[0];
-                    Some(Command::GetAttr { index })
+                    Ok(Some(Command::GetAttr { index }))
                 } else {
-                    Some(Command::BadArguments)
+                    Err(Error::BadArguments)
                 }
             }
             CMD_CRCIF => {
@@ -355,9 +355,9 @@ impl CommandDecoder {
                 if self.count == num_expected_bytes {
                     let address = parse_u32(&self.buffer[0..4]);
                     let length = parse_u32(&self.buffer[4..8]);
-                    Some(Command::CrcIntFlash { address, length })
+                    Ok(Some(Command::CrcIntFlash { address, length }))
                 } else {
-                    Some(Command::BadArguments)
+                    Err(Error::BadArguments)
                 }
             }
             CMD_CRCEF => {
@@ -365,30 +365,30 @@ impl CommandDecoder {
                 if self.count == num_expected_bytes {
                     let address = parse_u32(&self.buffer[0..4]);
                     let length = parse_u32(&self.buffer[4..8]);
-                    Some(Command::CrcExFlash { address, length })
+                    Ok(Some(Command::CrcExFlash { address, length }))
                 } else {
-                    Some(Command::BadArguments)
+                    Err(Error::BadArguments)
                 }
             }
             CMD_XEPAGE => {
                 let num_expected_bytes: usize = 4;
                 if self.count == num_expected_bytes {
                     let address = parse_u32(&self.buffer[0..4]);
-                    Some(Command::EraseExPage { address })
+                    Ok(Some(Command::EraseExPage { address }))
                 } else {
-                    Some(Command::BadArguments)
+                    Err(Error::BadArguments)
                 }
             }
-            CMD_XFINIT => Some(Command::ExFlashInit),
-            CMD_CLKOUT => Some(Command::ClockOut),
+            CMD_XFINIT => Ok(Some(Command::ExFlashInit)),
+            CMD_CLKOUT => Ok(Some(Command::ClockOut)),
             CMD_WUSER => {
                 let num_expected_bytes: usize = 8;
                 if self.count == num_expected_bytes {
                     let page1 = parse_u32(&self.buffer[0..4]);
                     let page2 = parse_u32(&self.buffer[4..8]);
-                    Some(Command::WriteFlashUserPages { page1, page2 })
+                    Ok(Some(Command::WriteFlashUserPages { page1, page2 }))
                 } else {
-                    Some(Command::BadArguments)
+                    Err(Error::BadArguments)
                 }
             }
             CMD_CHANGE_BAUD => {
@@ -397,25 +397,27 @@ impl CommandDecoder {
                     let mode = self.buffer[0];
                     let baud = parse_u32(&self.buffer[1..5]);
                     match mode {
-                        0x01 => Some(Command::ChangeBaud {
+                        0x01 => Ok(Some(Command::ChangeBaud {
                             mode: BaudMode::Set,
                             baud,
-                        }),
-                        0x02 => Some(Command::ChangeBaud {
+                        })),
+                        0x02 => Ok(Some(Command::ChangeBaud {
                             mode: BaudMode::Verify,
                             baud,
-                        }),
-                        _ => Some(Command::BadArguments),
+                        })),
+                        _ => Err(Error::BadArguments),
 
                     }
                 } else {
-                    Some(Command::BadArguments)
+                    Err(Error::BadArguments)
                 }
             }
-            _ => None,
+            _ => Ok(None),
         };
-        // A command signifies the end of the buffer
-        if result.is_some() {
+        // A command or error signifies the end of the buffer
+        if let Ok(Some(_)) = result {
+            self.count = 0;
+        } else if let Err(_) = result {
             self.count = 0;
         }
         result
@@ -445,7 +447,7 @@ impl ResponseDecoder {
     /// bytes have been seen, this function returns `None`. Once enough bytes
     /// have been seen, it returns `Some(Response)` containing the
     /// decoded Response.
-    pub fn receive(&mut self, ch: u8) -> Option<Response> {
+    pub fn receive(&mut self, ch: u8) -> Result<Option<Response>, Error> {
         match self.state {
             DecoderState::Loading => self.handle_loading(ch),
             DecoderState::Escape => self.handle_escape(ch),
@@ -459,28 +461,30 @@ impl ResponseDecoder {
         }
     }
 
-    fn handle_loading(&mut self, ch: u8) -> Option<Response> {
+    fn handle_loading(&mut self, ch: u8) -> Result<Option<Response>, Error> {
         if ch == ESCAPE_CHAR {
             self.state = DecoderState::Escape;
         } else {
             self.load_char(ch);
         }
-        None
+        Ok(None)
     }
 
-    fn handle_escape(&mut self, ch: u8) -> Option<Response> {
+    fn handle_escape(&mut self, ch: u8) -> Result<Option<Response>, Error> {
         self.state = DecoderState::Loading;
         let result = match ch {
             ESCAPE_CHAR => {
                 // Double escape means just load an escape
                 self.load_char(ch);
-                None
+                Ok(None)
             }
-            RES_PONG => Some(Response::Pong),
-            _ => None,
+            RES_PONG => Ok(Some(Response::Pong)),
+            _ => Ok(None),
         };
-        // A command signifies the end of the buffer
-        if result.is_some() {
+        // A response or error signifies the end of the buffer
+        if let Ok(Some(_)) = result {
+            self.count = 0;
+        } else if let Err(_) = result {
             self.count = 0;
         }
         result
@@ -758,10 +762,9 @@ mod tests {
     #[test]
     fn check_cmd_ping_decode() {
         let mut p = CommandDecoder::new();
-        assert!(p.receive(ESCAPE_CHAR).is_none());
-        let o = p.receive(CMD_PING);
-        match o.unwrap() {
-            Command::Ping => {}
+        assert_eq!(p.receive(ESCAPE_CHAR), Ok(None));
+        match p.receive(CMD_PING) {
+            Ok(Some(Command::Ping)) => {}
             e => panic!("Did not expect: {:?}", e),
         }
     }
@@ -777,33 +780,11 @@ mod tests {
     }
 
     #[test]
-    fn check_pong_rsp_decode() {
-        let mut p = ResponseDecoder::new();
-        assert!(p.receive(ESCAPE_CHAR).is_none());
-        let o = p.receive(RES_PONG);
-        match o.unwrap() {
-            Response::Pong => {}
-            e => panic!("Did not expect: {:?}", e),
-        }
-    }
-
-    #[test]
-    fn check_pong_rsp_encode() {
-        let rsp = Response::Pong;
-        let mut e = ResponseEncoder::new(&rsp);
-        assert_eq!(e.next(), Some(ESCAPE_CHAR));
-        assert_eq!(e.next(), Some(RES_PONG));
-        assert_eq!(e.next(), None);
-        assert_eq!(e.next(), None);
-    }
-
-    #[test]
     fn check_cmd_info_decode() {
         let mut p = CommandDecoder::new();
-        assert!(p.receive(ESCAPE_CHAR).is_none());
-        let o = p.receive(CMD_INFO);
-        match o.unwrap() {
-            Command::Info => {}
+        assert_eq!(p.receive(ESCAPE_CHAR), Ok(None));
+        match p.receive(CMD_INFO) {
+            Ok(Some(Command::Info)) => {}
             e => panic!("Did not expect: {:?}", e),
         }
     }
@@ -819,26 +800,96 @@ mod tests {
     }
 
     #[test]
+    fn check_cmd_id_decode() {
+        let mut p = CommandDecoder::new();
+        assert_eq!(p.receive(ESCAPE_CHAR), Ok(None));
+        match p.receive(CMD_ID) {
+            Ok(Some(Command::Id)) => {}
+            e => panic!("Did not expect: {:?}", e),
+        }
+    }
+
+    #[test]
+    fn check_cmd_id_encode() {
+        let cmd = Command::Id;
+        let mut e = CommandEncoder::new(&cmd);
+        assert_eq!(e.next(), Some(ESCAPE_CHAR));
+        assert_eq!(e.next(), Some(CMD_ID));
+        assert_eq!(e.next(), None);
+        assert_eq!(e.next(), None);
+    }
+
+    #[test]
+    fn check_cmd_reset_decode() {
+        let mut p = CommandDecoder::new();
+        assert_eq!(p.receive(ESCAPE_CHAR), Ok(None));
+        match p.receive(CMD_RESET) {
+            Ok(Some(Command::Reset)) => {}
+            e => panic!("Did not expect: {:?}", e),
+        }
+    }
+
+    #[test]
+    fn check_cmd_reset_encode() {
+        let cmd = Command::Reset;
+        let mut e = CommandEncoder::new(&cmd);
+        assert_eq!(e.next(), Some(ESCAPE_CHAR));
+        assert_eq!(e.next(), Some(CMD_RESET));
+        assert_eq!(e.next(), None);
+        assert_eq!(e.next(), None);
+    }
+
+    #[test]
+    fn check_cmd_erase_page_decode() {
+        let mut p = CommandDecoder::new();
+        assert_eq!(p.receive(0xEF), Ok(None));
+        assert_eq!(p.receive(0xBE), Ok(None));
+        assert_eq!(p.receive(0xAD), Ok(None));
+        assert_eq!(p.receive(0xDE), Ok(None));
+        assert_eq!(p.receive(ESCAPE_CHAR), Ok(None)); // Escape
+        match p.receive(CMD_EPAGE) {
+            Ok(Some(Command::ErasePage { address })) => {
+                assert_eq!(address, 0xDEADBEEF);
+            }
+            e => panic!("Did not expect: {:?}", e),
+        }
+    }
+
+    #[test]
+    fn check_cmd_erase_page_encode() {
+        let cmd = Command::ErasePage { address: 0xDEADBEEF };
+        let mut e = CommandEncoder::new(&cmd);
+        // 4 byte address, little-endian
+        assert_eq!(e.next(), Some(0xEF));
+        assert_eq!(e.next(), Some(0xBE));
+        assert_eq!(e.next(), Some(0xAD));
+        assert_eq!(e.next(), Some(0xDE));
+        assert_eq!(e.next(), Some(ESCAPE_CHAR));
+        assert_eq!(e.next(), Some(CMD_EPAGE));
+        assert_eq!(e.next(), None);
+        assert_eq!(e.next(), None);
+    }
+
+    #[test]
     fn check_cmd_write_page_decode() {
         let mut p = CommandDecoder::new();
-        p.receive(0xEF);
-        p.receive(0xBE);
-        p.receive(0xAD);
-        p.receive(0xDE);
+        assert_eq!(p.receive(0xEF), Ok(None));
+        assert_eq!(p.receive(0xBE), Ok(None));
+        assert_eq!(p.receive(0xAD), Ok(None));
+        assert_eq!(p.receive(0xDE), Ok(None));
         for i in 0..512 {
             let datum = i as u8;
-            p.receive(datum);
+            assert_eq!(p.receive(datum), Ok(None));
             if datum == ESCAPE_CHAR {
-                p.receive(datum);
+                assert_eq!(p.receive(datum), Ok(None));
             }
         }
-        p.receive(ESCAPE_CHAR); // Escape
-        let o = p.receive(CMD_WPAGE); // WriteFlash
-        match o.unwrap() {
-            Command::WritePage {
+        assert_eq!(p.receive(ESCAPE_CHAR), Ok(None)); // Escape
+        match p.receive(CMD_WPAGE) {
+            Ok(Some(Command::WritePage {
                 address,
                 data: ref page,
-            } => {
+            })) => {
                 assert_eq!(address, 0xDEADBEEF);
                 assert_eq!(page.len(), 512);
                 for i in 0..512 {
@@ -879,85 +930,28 @@ mod tests {
         assert_eq!(e.next(), None);
     }
 
+    // Responses
+
     #[test]
-    fn check_cmd_erase_page_decode() {
-        let mut p = CommandDecoder::new();
-        p.receive(0xEF);
-        p.receive(0xBE);
-        p.receive(0xAD);
-        p.receive(0xDE);
-        p.receive(ESCAPE_CHAR); // Escape
-        let o = p.receive(CMD_EPAGE); // ErasePage
-        match o.unwrap() {
-            Command::ErasePage { address } => {
-                assert_eq!(address, 0xDEADBEEF);
-            }
+    fn check_pong_rsp_decode() {
+        let mut p = ResponseDecoder::new();
+        assert_eq!(p.receive(ESCAPE_CHAR), Ok(None));
+        match p.receive(RES_PONG) {
+            Ok(Some(Response::Pong)) => {}
             e => panic!("Did not expect: {:?}", e),
         }
     }
 
     #[test]
-    fn check_cmd_erase_page_encode() {
-        let cmd = Command::ErasePage { address: 0xDEADBEEF };
-        let mut e = CommandEncoder::new(&cmd);
-        // 4 byte address, little-endian
-        assert_eq!(e.next(), Some(0xEF));
-        assert_eq!(e.next(), Some(0xBE));
-        assert_eq!(e.next(), Some(0xAD));
-        assert_eq!(e.next(), Some(0xDE));
+    fn check_pong_rsp_encode() {
+        let rsp = Response::Pong;
+        let mut e = ResponseEncoder::new(&rsp);
         assert_eq!(e.next(), Some(ESCAPE_CHAR));
-        assert_eq!(e.next(), Some(CMD_EPAGE));
+        assert_eq!(e.next(), Some(RES_PONG));
         assert_eq!(e.next(), None);
         assert_eq!(e.next(), None);
     }
 
-    #[test]
-    fn check_cmd_reset_decode() {
-        let mut p = CommandDecoder::new();
-        {
-            let o = p.receive(ESCAPE_CHAR);
-            assert!(o.is_none());
-        }
-        let o = p.receive(CMD_RESET);
-        match o.unwrap() {
-            Command::Reset => {}
-            e => panic!("Did not expect: {:?}", e),
-        }
-    }
-
-    #[test]
-    fn check_cmd_reset_encode() {
-        let cmd = Command::Reset;
-        let mut e = CommandEncoder::new(&cmd);
-        assert_eq!(e.next(), Some(ESCAPE_CHAR));
-        assert_eq!(e.next(), Some(CMD_RESET));
-        assert_eq!(e.next(), None);
-        assert_eq!(e.next(), None);
-    }
-
-    #[test]
-    fn check_cmd_id_decode() {
-        let mut p = CommandDecoder::new();
-        {
-            let o = p.receive(ESCAPE_CHAR);
-            assert!(o.is_none());
-        }
-        let o = p.receive(CMD_ID);
-        match o.unwrap() {
-            Command::Id => {}
-            e => panic!("Did not expect: {:?}", e),
-        }
-    }
-
-    #[test]
-    fn check_cmd_id_encode() {
-        let cmd = Command::Id;
-        let mut e = CommandEncoder::new(&cmd);
-        assert_eq!(e.next(), Some(ESCAPE_CHAR));
-        assert_eq!(e.next(), Some(CMD_ID));
-        assert_eq!(e.next(), None);
-        assert_eq!(e.next(), None);
-    }
 }
 
 //
