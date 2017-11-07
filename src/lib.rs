@@ -732,13 +732,26 @@ impl<'a> CommandEncoder<'a> {
             &Command::Reset => self.render_basic_cmd(count, CMD_RESET),
             &Command::ErasePage { address } => self.render_erasepage_cmd(address),
             &Command::WritePage { address, data } => self.render_writepage_cmd(address, data),
-            _ => unimplemented!("Not implemented"),
+            &Command::EraseExBlock { address } => self.render_eraseexblock(address),
+            &Command::WriteExPage { address, data } => self.render_writeexpage(address, data),
+            &Command::CrcRxBuffer => self.render_basic_cmd(count, CMD_CRCRX),
+            &Command::ReadRange { address, length } => self.render_readrange(address, length),
+            &Command::ExReadRange { address, length } => self.render_exreadrange(address, length),
+            &Command::SetAttr { index, key, value } => self.render_setattr(index, key, value),
+            &Command::GetAttr { index } => self.render_getattr(index),
+            &Command::CrcIntFlash { address, length } => self.render_crcintflash(address, length),
+            &Command::CrcExtFlash { address, length } => self.render_crcextflash(address, length),
+            &Command::EraseExPage { address } => self.render_eraseexpage(address),
+            &Command::ExtFlashInit => self.render_basic_cmd(count, CMD_XFINIT),
+            &Command::ClockOut => self.render_basic_cmd(count, CMD_CLKOUT),
+            &Command::WriteFlashUserPages { page1, page2 } => self.render_writeflashuserpages(page1, page2),
+            &Command::ChangeBaud { mode, baud } => self.render_changebaud(mode, baud),
         };
         self.count = self.count + inc;
         result
     }
 
-    fn send_byte(&mut self, byte: u8) -> (usize, Option<u8>) {
+    fn render_byte(&mut self, byte: u8) -> (usize, Option<u8>) {
         if byte == ESCAPE_CHAR {
             if self.sent_escape {
                 self.sent_escape = false;
@@ -753,21 +766,29 @@ impl<'a> CommandEncoder<'a> {
         }
     }
 
-    fn render_u32(&mut self, idx: usize, value: u32) -> (usize, Option<u8>) {
+    fn render_u16(&mut self, idx: usize, value: u16) -> (usize, Option<u8>) {
         match idx {
-            0 => self.send_byte(value as u8),
-            1 => self.send_byte((value >> 8) as u8),
-            2 => self.send_byte((value >> 16) as u8),
-            3 => self.send_byte((value >> 24) as u8),
+            0 => self.render_byte(value as u8),
+            1 => self.render_byte((value >> 8) as u8),
             _ => (0, None),
         }
     }
 
-    fn render_page(&mut self, idx: usize, data: &[u8]) -> (usize, Option<u8>) {
-        if (idx < data.len()) && (idx < 512) {
-            self.send_byte(data[idx])
-        } else if idx < 512 {
-            self.send_byte(0xFF) // pad short data with 0xFFs
+    fn render_u32(&mut self, idx: usize, value: u32) -> (usize, Option<u8>) {
+        match idx {
+            0 => self.render_byte(value as u8),
+            1 => self.render_byte((value >> 8) as u8),
+            2 => self.render_byte((value >> 16) as u8),
+            3 => self.render_byte((value >> 24) as u8),
+            _ => (0, None),
+        }
+    }
+
+    fn render_buffer(&mut self, idx: usize, page_size: usize, data: &[u8]) -> (usize, Option<u8>) {
+        if (idx < data.len()) && (idx < page_size) {
+            self.render_byte(data[idx])
+        } else if idx < page_size {
+            self.render_byte(0xFF) // pad short data with 0xFFs
         } else {
             (0, None)
         }
@@ -793,8 +814,114 @@ impl<'a> CommandEncoder<'a> {
         let count = self.count;
         match count {
             0...3 => self.render_u32(count, address),
-            4...515 => self.render_page(count - 4, data),
+            4...515 => self.render_buffer(count - 4, INT_PAGE_SIZE, data),
             _ => self.render_basic_cmd(count - 516, CMD_WPAGE),
+        }
+    }
+
+    fn render_eraseexblock(&mut self, address: u32) -> (usize, Option<u8>) {
+        let count = self.count;
+        match count {
+            0...3 => self.render_u32(count, address),
+            _ => self.render_basic_cmd(count - 4, CMD_XEBLOCK),
+        }
+    }
+
+    fn render_writeexpage(&mut self, address: u32, data: &[u8]) -> (usize, Option<u8>) {
+        let count = self.count;
+        match count {
+            0...3 => self.render_u32(count, address),
+            4...259 => self.render_buffer(count - 4, EXT_PAGE_SIZE, data),
+            _ => self.render_basic_cmd(count - 260, CMD_XWPAGE),
+        }
+    }
+
+    fn render_readrange(&mut self, address: u32, length: u16) -> (usize, Option<u8>) {
+        let count = self.count;
+        match count {
+            0...3 => self.render_u32(count, address),
+            4...5 => self.render_u16(count - 4, length),
+            _ => self.render_basic_cmd(count - 6, CMD_RRANGE),
+        }
+    }
+
+    fn render_exreadrange(&mut self, address: u32, length: u16) -> (usize, Option<u8>) {
+        let count = self.count;
+        match count {
+            0...3 => self.render_u32(count, address),
+            4...5 => self.render_u16(count - 4, length),
+            _ => self.render_basic_cmd(count - 6, CMD_XRRANGE),
+        }
+    }
+
+    fn render_setattr(&mut self, index: u8, key: &[u8], value: &[u8]) -> (usize, Option<u8>) {
+        let count = self.count;
+        let max_len = if value.len() > MAX_ATTR_LEN {
+            MAX_ATTR_LEN
+        } else {
+            value.len()
+        };
+        match count {
+            0 => self.render_byte(index),
+            1...9 => self.render_buffer(count - 1, KEY_LEN, key),
+            10 => self.render_byte(max_len as u8),
+            x if (max_len > 0) && (x < max_len + 11) => self.render_buffer(count - 11, max_len, value),
+            _ => self.render_basic_cmd(count - (11 + max_len), CMD_SATTR),
+        }
+    }
+
+    fn render_getattr(&mut self, index: u8) -> (usize, Option<u8>) {
+        let count = self.count;
+        match count {
+            0 => self.render_byte(index),
+            _ => self.render_basic_cmd(count - 1, CMD_GATTR),
+        }
+    }
+
+    fn render_crcintflash(&mut self, address: u32, length: u32) -> (usize, Option<u8>) {
+        let count = self.count;
+        match count {
+            0...3 => self.render_u32(count, address),
+            4...7 => self.render_u32(count - 4, length),
+            _ => self.render_basic_cmd(count - 8, CMD_CRCIF),
+        }
+    }
+
+    fn render_crcextflash(&mut self, address: u32, length: u32) -> (usize, Option<u8>) {
+        let count = self.count;
+        match count {
+            0...3 => self.render_u32(count, address),
+            4...7 => self.render_u32(count - 4, length),
+            _ => self.render_basic_cmd(count - 8, CMD_CRCEF),
+        }
+    }
+
+    fn render_eraseexpage(&mut self, address: u32) -> (usize, Option<u8>) {
+        let count = self.count;
+        match count {
+            0...3 => self.render_u32(count, address),
+            _ => self.render_basic_cmd(count - 4, CMD_XEPAGE),
+        }
+    }
+
+    fn render_writeflashuserpages(&mut self, page1: u32, page2: u32) -> (usize, Option<u8>) {
+        let count = self.count;
+        match count {
+            0...3 => self.render_u32(count, page1),
+            4...7 => self.render_u32(count - 4, page2),
+            _ => self.render_basic_cmd(count - 8, CMD_WUSER),
+        }
+    }
+
+    fn render_changebaud(&mut self, mode: BaudMode, baud: u32) -> (usize, Option<u8>) {
+        let count = self.count;
+        match count {
+            0 => self.render_byte(match mode {
+                BaudMode::Set => 0x01,
+                BaudMode::Verify => 0x02,
+            }),
+            1...3 => self.render_u32(count - 1, baud),
+            _ => self.render_basic_cmd(count - 8, CMD_WUSER),
         }
     }
 }
@@ -855,7 +982,7 @@ impl<'a> ResponseEncoder<'a> {
         result
     }
 
-    fn send_byte(&mut self, byte: u8) -> (usize, Option<u8>) {
+    fn render_byte(&mut self, byte: u8) -> (usize, Option<u8>) {
         if byte == ESCAPE_CHAR {
             if self.sent_escape {
                 self.sent_escape = false;
@@ -883,7 +1010,7 @@ impl<'a> ResponseEncoder<'a> {
         let count = self.count;
         match count {
             0...1 => self.render_header(count, RES_RRANGE),
-            x if x < data.len() + 2 => self.send_byte(data[x - 2]),
+            x if x < data.len() + 2 => self.render_byte(data[x - 2]),
             _ => (0, None),
         }
     }
@@ -892,7 +1019,7 @@ impl<'a> ResponseEncoder<'a> {
         let count = self.count;
         match count {
             0...1 => self.render_header(count, RES_XRRANGE),
-            x if x <= data.len() + 2 => self.send_byte(data[x - 2]),
+            x if x <= data.len() + 2 => self.render_byte(data[x - 2]),
             _ => (0, None),
         }
     }
@@ -932,25 +1059,25 @@ impl<'a> ResponseEncoder<'a> {
 
     fn render_u16(&mut self, idx: usize, value: u16) -> (usize, Option<u8>) {
         match idx {
-            0 => self.send_byte(value as u8),
-            1 => self.send_byte((value >> 8) as u8),
+            0 => self.render_byte(value as u8),
+            1 => self.render_byte((value >> 8) as u8),
             _ => (0, None),
         }
     }
 
     fn render_u32(&mut self, idx: usize, value: u32) -> (usize, Option<u8>) {
         match idx {
-            0 => self.send_byte(value as u8),
-            1 => self.send_byte((value >> 8) as u8),
-            2 => self.send_byte((value >> 16) as u8),
-            3 => self.send_byte((value >> 24) as u8),
+            0 => self.render_byte(value as u8),
+            1 => self.render_byte((value >> 8) as u8),
+            2 => self.render_byte((value >> 16) as u8),
+            3 => self.render_byte((value >> 24) as u8),
             _ => (0, None),
         }
     }
 
     fn render_buffer(&mut self, idx: usize, data: &[u8]) -> (usize, Option<u8>) {
         if idx < data.len() {
-            self.send_byte(data[idx])
+            self.render_byte(data[idx])
         } else {
             (0, None)
         }
