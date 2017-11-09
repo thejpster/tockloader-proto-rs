@@ -14,7 +14,9 @@
 //
 // ****************************************************************************
 
-// None
+extern crate byteorder;
+
+use byteorder::{LittleEndian, ByteOrder};
 
 // ****************************************************************************
 //
@@ -319,7 +321,7 @@ impl CommandDecoder {
             CMD_EPAGE => {
                 let num_expected_bytes: usize = 4;
                 if self.count == num_expected_bytes {
-                    let address = parse_u32(&self.buffer[0..4]);
+                    let address = LittleEndian::read_u32(&self.buffer[0..4]);
                     Ok(Some(Command::ErasePage { address }))
                 } else {
                     Err(Error::BadArguments)
@@ -329,7 +331,7 @@ impl CommandDecoder {
                 let num_expected_bytes: usize = INT_PAGE_SIZE + 4;
                 if self.count == num_expected_bytes {
                     let payload = &self.buffer[0..num_expected_bytes];
-                    let address = parse_u32(&payload[0..4]);
+                    let address = LittleEndian::read_u32(&payload[0..4]);
                     Ok(Some(Command::WritePage {
                         address,
                         data: &payload[4..num_expected_bytes],
@@ -341,7 +343,7 @@ impl CommandDecoder {
             CMD_XEBLOCK => {
                 let num_expected_bytes: usize = 4;
                 if self.count == num_expected_bytes {
-                    let address = parse_u32(&self.buffer[0..4]);
+                    let address = LittleEndian::read_u32(&self.buffer[0..4]);
                     Ok(Some(Command::EraseExBlock { address }))
                 } else {
                     Err(Error::BadArguments)
@@ -351,7 +353,7 @@ impl CommandDecoder {
                 let num_expected_bytes: usize = EXT_PAGE_SIZE + 4;
                 if self.count == num_expected_bytes {
                     let payload = &self.buffer[0..num_expected_bytes];
-                    let address = parse_u32(&payload[0..4]);
+                    let address = LittleEndian::read_u32(&payload[0..4]);
                     Ok(Some(Command::WriteExPage {
                         address,
                         data: &payload[4..num_expected_bytes],
@@ -364,8 +366,8 @@ impl CommandDecoder {
             CMD_RRANGE => {
                 let num_expected_bytes: usize = 6;
                 if self.count == num_expected_bytes {
-                    let address = parse_u32(&self.buffer[0..4]);
-                    let length = parse_u16(&self.buffer[4..6]);
+                    let address = LittleEndian::read_u32(&self.buffer[0..4]);
+                    let length = LittleEndian::read_u16(&self.buffer[4..6]);
                     Ok(Some(Command::ReadRange { address, length }))
                 } else {
                     Err(Error::BadArguments)
@@ -374,8 +376,8 @@ impl CommandDecoder {
             CMD_XRRANGE => {
                 let num_expected_bytes: usize = 6;
                 if self.count == num_expected_bytes {
-                    let address = parse_u32(&self.buffer[0..4]);
-                    let length = parse_u16(&self.buffer[4..6]);
+                    let address = LittleEndian::read_u32(&self.buffer[0..4]);
+                    let length = LittleEndian::read_u16(&self.buffer[4..6]);
                     Ok(Some(Command::ExReadRange { address, length }))
                 } else {
                     Err(Error::BadArguments)
@@ -409,8 +411,8 @@ impl CommandDecoder {
             CMD_CRCIF => {
                 let num_expected_bytes: usize = 8;
                 if self.count == num_expected_bytes {
-                    let address = parse_u32(&self.buffer[0..4]);
-                    let length = parse_u32(&self.buffer[4..8]);
+                    let address = LittleEndian::read_u32(&self.buffer[0..4]);
+                    let length = LittleEndian::read_u32(&self.buffer[4..8]);
                     Ok(Some(Command::CrcIntFlash { address, length }))
                 } else {
                     Err(Error::BadArguments)
@@ -419,8 +421,8 @@ impl CommandDecoder {
             CMD_CRCEF => {
                 let num_expected_bytes: usize = 8;
                 if self.count == num_expected_bytes {
-                    let address = parse_u32(&self.buffer[0..4]);
-                    let length = parse_u32(&self.buffer[4..8]);
+                    let address = LittleEndian::read_u32(&self.buffer[0..4]);
+                    let length = LittleEndian::read_u32(&self.buffer[4..8]);
                     Ok(Some(Command::CrcExtFlash { address, length }))
                 } else {
                     Err(Error::BadArguments)
@@ -429,7 +431,7 @@ impl CommandDecoder {
             CMD_XEPAGE => {
                 let num_expected_bytes: usize = 4;
                 if self.count == num_expected_bytes {
-                    let address = parse_u32(&self.buffer[0..4]);
+                    let address = LittleEndian::read_u32(&self.buffer[0..4]);
                     Ok(Some(Command::EraseExPage { address }))
                 } else {
                     Err(Error::BadArguments)
@@ -440,8 +442,8 @@ impl CommandDecoder {
             CMD_WUSER => {
                 let num_expected_bytes: usize = 8;
                 if self.count == num_expected_bytes {
-                    let page1 = parse_u32(&self.buffer[0..4]);
-                    let page2 = parse_u32(&self.buffer[4..8]);
+                    let page1 = LittleEndian::read_u32(&self.buffer[0..4]);
+                    let page2 = LittleEndian::read_u32(&self.buffer[4..8]);
                     Ok(Some(Command::WriteFlashUserPages { page1, page2 }))
                 } else {
                     Err(Error::BadArguments)
@@ -451,7 +453,7 @@ impl CommandDecoder {
                 let num_expected_bytes: usize = 5;
                 if self.count == num_expected_bytes {
                     let mode = self.buffer[0];
-                    let baud = parse_u32(&self.buffer[1..5]);
+                    let baud = LittleEndian::read_u32(&self.buffer[1..5]);
                     match mode {
                         0x01 => Ok(Some(Command::ChangeBaud {
                             mode: BaudMode::Set,
@@ -531,8 +533,8 @@ impl ResponseDecoder {
         if self.needed == Some(self.count) {
             let result = match self.buffer[0] {
                 RES_CRCRX => {
-                    let length = parse_u16(&self.buffer[1..3]);
-                    let crc = parse_u32(&self.buffer[3..7]);
+                    let length = LittleEndian::read_u16(&self.buffer[1..3]);
+                    let crc = LittleEndian::read_u32(&self.buffer[3..7]);
                     Ok(Some(Response::CrcRxBuffer { length, crc }))
                 }
                 RES_RRANGE => {
@@ -554,11 +556,11 @@ impl ResponseDecoder {
                     }
                 }
                 RES_CRCIF => {
-                    let crc = parse_u32(&self.buffer[1..5]);
+                    let crc = LittleEndian::read_u32(&self.buffer[1..5]);
                     Ok(Some(Response::CrcIntFlash { crc }))
                 }
                 RES_CRCXF => {
-                    let crc = parse_u32(&self.buffer[1..5]);
+                    let crc = LittleEndian::read_u32(&self.buffer[1..5]);
                     Ok(Some(Response::CrcExtFlash { crc }))
                 }
                 RES_INFO => {
@@ -724,38 +726,6 @@ impl<'a> CommandEncoder<'a> {
             count: 0,
             sent_escape: false,
         })
-    }
-
-    /// Supply the next encoded byte. Once all the bytes have been emitted, it
-    /// returns `None` forevermore.
-    pub fn next(&mut self) -> Option<u8> {
-        let count = self.count;
-        let (inc, result) = match self.command {
-            &Command::Ping => self.render_basic_cmd(count, CMD_PING),
-            &Command::Info => self.render_basic_cmd(count, CMD_INFO),
-            &Command::Id => self.render_basic_cmd(count, CMD_ID),
-            &Command::Reset => self.render_basic_cmd(count, CMD_RESET),
-            &Command::ErasePage { address } => self.render_erasepage_cmd(address),
-            &Command::WritePage { address, data } => self.render_writepage_cmd(address, data),
-            &Command::EraseExBlock { address } => self.render_eraseexblock(address),
-            &Command::WriteExPage { address, data } => self.render_writeexpage(address, data),
-            &Command::CrcRxBuffer => self.render_basic_cmd(count, CMD_CRCRX),
-            &Command::ReadRange { address, length } => self.render_readrange(address, length),
-            &Command::ExReadRange { address, length } => self.render_exreadrange(address, length),
-            &Command::SetAttr { index, key, value } => self.render_setattr(index, key, value),
-            &Command::GetAttr { index } => self.render_getattr(index),
-            &Command::CrcIntFlash { address, length } => self.render_crcintflash(address, length),
-            &Command::CrcExtFlash { address, length } => self.render_crcextflash(address, length),
-            &Command::EraseExPage { address } => self.render_eraseexpage(address),
-            &Command::ExtFlashInit => self.render_basic_cmd(count, CMD_XFINIT),
-            &Command::ClockOut => self.render_basic_cmd(count, CMD_CLKOUT),
-            &Command::WriteFlashUserPages { page1, page2 } => {
-                self.render_writeflashuserpages(page1, page2)
-            }
-            &Command::ChangeBaud { mode, baud } => self.render_changebaud(mode, baud),
-        };
-        self.count = self.count + inc;
-        result
     }
 
     fn render_byte(&mut self, byte: u8) -> (usize, Option<u8>) {
@@ -937,6 +907,42 @@ impl<'a> CommandEncoder<'a> {
     }
 }
 
+impl<'a> Iterator for CommandEncoder<'a> {
+    type Item = u8;
+
+    /// Supply the next encoded byte. Once all the bytes have been emitted, it
+    /// returns `None` forevermore.
+    fn next(&mut self) -> Option<u8> {
+        let count = self.count;
+        let (inc, result) = match self.command {
+            &Command::Ping => self.render_basic_cmd(count, CMD_PING),
+            &Command::Info => self.render_basic_cmd(count, CMD_INFO),
+            &Command::Id => self.render_basic_cmd(count, CMD_ID),
+            &Command::Reset => self.render_basic_cmd(count, CMD_RESET),
+            &Command::ErasePage { address } => self.render_erasepage_cmd(address),
+            &Command::WritePage { address, data } => self.render_writepage_cmd(address, data),
+            &Command::EraseExBlock { address } => self.render_eraseexblock(address),
+            &Command::WriteExPage { address, data } => self.render_writeexpage(address, data),
+            &Command::CrcRxBuffer => self.render_basic_cmd(count, CMD_CRCRX),
+            &Command::ReadRange { address, length } => self.render_readrange(address, length),
+            &Command::ExReadRange { address, length } => self.render_exreadrange(address, length),
+            &Command::SetAttr { index, key, value } => self.render_setattr(index, key, value),
+            &Command::GetAttr { index } => self.render_getattr(index),
+            &Command::CrcIntFlash { address, length } => self.render_crcintflash(address, length),
+            &Command::CrcExtFlash { address, length } => self.render_crcextflash(address, length),
+            &Command::EraseExPage { address } => self.render_eraseexpage(address),
+            &Command::ExtFlashInit => self.render_basic_cmd(count, CMD_XFINIT),
+            &Command::ClockOut => self.render_basic_cmd(count, CMD_CLKOUT),
+            &Command::WriteFlashUserPages { page1, page2 } => {
+                self.render_writeflashuserpages(page1, page2)
+            }
+            &Command::ChangeBaud { mode, baud } => self.render_changebaud(mode, baud),
+        };
+        self.count = self.count + inc;
+        result
+    }
+}
+
 impl<'a> ResponseEncoder<'a> {
     /// Create a new `ResponseEncoder`.
     ///
@@ -964,33 +970,6 @@ impl<'a> ResponseEncoder<'a> {
             count: 0,
             sent_escape: false,
         })
-    }
-
-    /// Supply the next encoded byte. Once all the bytes have been emitted, it
-    /// returns `None` forevermore.
-    pub fn next(&mut self) -> Option<u8> {
-        let count = self.count;
-        let (inc, result) = match self.response {
-            &Response::Overflow => self.render_header(count, RES_OVERFLOW),
-            &Response::Pong => self.render_header(count, RES_PONG),
-            &Response::BadAddress => self.render_header(count, RES_BADADDR),
-            &Response::InternalError => self.render_header(count, RES_INTERROR),
-            &Response::BadArguments => self.render_header(count, RES_BADARGS),
-            &Response::Ok => self.render_header(count, RES_OK),
-            &Response::Unknown => self.render_header(count, RES_UNKNOWN),
-            &Response::ExtFlashTimeout => self.render_header(count, RES_XFTIMEOUT),
-            &Response::ExtFlashPageError => self.render_header(count, RES_XFEPE),
-            &Response::CrcRxBuffer { length, crc } => self.render_crc_rx_buffer(length, crc),
-            &Response::ReadRange { data } => self.render_read_range(data),
-            &Response::ExReadRange { data } => self.render_ex_read_range(data),
-            &Response::GetAttr { key, value } => self.render_get_attr(key, value),
-            &Response::CrcIntFlash { crc } => self.render_crc_int_flash(crc),
-            &Response::CrcExtFlash { crc } => self.render_crc_ex_flash(crc),
-            &Response::Info { info } => self.render_info(info),
-            &Response::ChangeBaudFail => self.render_header(count, RES_CHANGE_BAUD_FAIL),
-        };
-        self.count = self.count + inc;
-        result
     }
 
     fn render_byte(&mut self, byte: u8) -> (usize, Option<u8>) {
@@ -1106,34 +1085,42 @@ impl<'a> ResponseEncoder<'a> {
     }
 }
 
+impl<'a> Iterator for ResponseEncoder<'a> {
+    type Item = u8;
+
+    /// Supply the next encoded byte. Once all the bytes have been emitted, it
+    /// returns `None` forevermore.
+    fn next(&mut self) -> Option<u8> {
+        let count = self.count;
+        let (inc, result) = match self.response {
+            &Response::Overflow => self.render_header(count, RES_OVERFLOW),
+            &Response::Pong => self.render_header(count, RES_PONG),
+            &Response::BadAddress => self.render_header(count, RES_BADADDR),
+            &Response::InternalError => self.render_header(count, RES_INTERROR),
+            &Response::BadArguments => self.render_header(count, RES_BADARGS),
+            &Response::Ok => self.render_header(count, RES_OK),
+            &Response::Unknown => self.render_header(count, RES_UNKNOWN),
+            &Response::ExtFlashTimeout => self.render_header(count, RES_XFTIMEOUT),
+            &Response::ExtFlashPageError => self.render_header(count, RES_XFEPE),
+            &Response::CrcRxBuffer { length, crc } => self.render_crc_rx_buffer(length, crc),
+            &Response::ReadRange { data } => self.render_read_range(data),
+            &Response::ExReadRange { data } => self.render_ex_read_range(data),
+            &Response::GetAttr { key, value } => self.render_get_attr(key, value),
+            &Response::CrcIntFlash { crc } => self.render_crc_int_flash(crc),
+            &Response::CrcExtFlash { crc } => self.render_crc_ex_flash(crc),
+            &Response::Info { info } => self.render_info(info),
+            &Response::ChangeBaudFail => self.render_header(count, RES_CHANGE_BAUD_FAIL),
+        };
+        self.count = self.count + inc;
+        result
+    }
+}
+
 // ****************************************************************************
 //
 // Private Impl/Functions/Modules
 //
 // ****************************************************************************
-
-/// Convert a four-byte array to a u32 - little endian.
-fn parse_u32(data: &[u8]) -> u32 {
-    let mut result: u32 = 0;
-    result += data[3] as u32;
-    result <<= 8;
-    result += data[2] as u32;
-    result <<= 8;
-    result += data[1] as u32;
-    result <<= 8;
-    result += data[0] as u32;
-    result
-}
-
-/// Convert a two-byte array to a u16 - little-endian.
-fn parse_u16(data: &[u8]) -> u16 {
-    let mut result: u16 = 0;
-    result += data[1] as u16;
-    result <<= 8;
-    result += data[0] as u16;
-    result
-}
-
 
 #[cfg(test)]
 mod tests {
@@ -1310,6 +1297,37 @@ mod tests {
     }
 
     #[test]
+    fn check_cmd_erase_block_decode() {
+        let mut p = CommandDecoder::new();
+        assert_eq!(p.receive(0xEF), Ok(None));
+        assert_eq!(p.receive(0xBE), Ok(None));
+        assert_eq!(p.receive(0xAD), Ok(None));
+        assert_eq!(p.receive(0xDE), Ok(None));
+        assert_eq!(p.receive(ESCAPE_CHAR), Ok(None)); // Escape
+        match p.receive(CMD_XEBLOCK) {
+            Ok(Some(Command::EraseExBlock { address })) => {
+                assert_eq!(address, 0xDEADBEEF);
+            }
+            e => panic!("Did not expect: {:?}", e),
+        }
+    }
+
+    #[test]
+    fn check_cmd_erase_block_encode() {
+        let cmd = Command::EraseExBlock { address: 0xDEADBEEF };
+        let mut e = CommandEncoder::new(&cmd).unwrap();
+        // 4 byte address, little-endian
+        assert_eq!(e.next(), Some(0xEF));
+        assert_eq!(e.next(), Some(0xBE));
+        assert_eq!(e.next(), Some(0xAD));
+        assert_eq!(e.next(), Some(0xDE));
+        assert_eq!(e.next(), Some(ESCAPE_CHAR));
+        assert_eq!(e.next(), Some(CMD_XEBLOCK));
+        assert_eq!(e.next(), None);
+        assert_eq!(e.next(), None);
+    }
+
+    #[test]
     fn check_cmd_write_ex_page_decode() {
         let mut p = CommandDecoder::new();
         assert_eq!(p.receive(0xEF), Ok(None));
@@ -1368,6 +1386,18 @@ mod tests {
         assert_eq!(e.next(), None);
     }
 
+    // Test CMD_CRCRX here
+    // Test CMD_RRANGE here
+    // Test CMD_XRRANGE here
+    // Test CMD_SATTR here
+    // Test CMD_GATTR here
+    // Test CMD_CRCIF here
+    // Test CMD_CRCEF here
+    // Test CMD_XEPAGE here
+    // Test CMD_XFINIT here
+    // Test CMD_CLKOUT here
+    // Test CMD_WUSER here
+    // Test CMD_CHANGE_BAUD here
 
     // Responses
 
