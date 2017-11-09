@@ -326,7 +326,7 @@ impl CommandDecoder {
                 }
             }
             CMD_WPAGE => {
-                let num_expected_bytes: usize = 512 + 4;
+                let num_expected_bytes: usize = INT_PAGE_SIZE + 4;
                 if self.count == num_expected_bytes {
                     let payload = &self.buffer[0..num_expected_bytes];
                     let address = parse_u32(&payload[0..4]);
@@ -348,7 +348,7 @@ impl CommandDecoder {
                 }
             }
             CMD_XWPAGE => {
-                let num_expected_bytes: usize = 512 + 4;
+                let num_expected_bytes: usize = EXT_PAGE_SIZE + 4;
                 if self.count == num_expected_bytes {
                     let payload = &self.buffer[0..num_expected_bytes];
                     let address = parse_u32(&payload[0..4]);
@@ -839,7 +839,7 @@ impl<'a> CommandEncoder<'a> {
         match count {
             0...3 => self.render_u32(count, address),
             4...259 => self.render_buffer(count - 4, EXT_PAGE_SIZE, data),
-            _ => self.render_basic_cmd(count - 260, CMD_XWPAGE),
+            _ => self.render_basic_cmd(count - (EXT_PAGE_SIZE + 4), CMD_XWPAGE),
         }
     }
 
@@ -1257,7 +1257,7 @@ mod tests {
         assert_eq!(p.receive(0xBE), Ok(None));
         assert_eq!(p.receive(0xAD), Ok(None));
         assert_eq!(p.receive(0xDE), Ok(None));
-        for i in 0..512 {
+        for i in 0..INT_PAGE_SIZE {
             let datum = i as u8;
             assert_eq!(p.receive(datum), Ok(None));
             if datum == ESCAPE_CHAR {
@@ -1271,8 +1271,8 @@ mod tests {
                         data: ref page,
                     })) => {
                 assert_eq!(address, 0xDEADBEEF);
-                assert_eq!(page.len(), 512);
-                for i in 0..512 {
+                assert_eq!(page.len(), INT_PAGE_SIZE);
+                for i in 0..INT_PAGE_SIZE {
                     let datum = i as u8;
                     assert_eq!(datum, page[i as usize]);
                 }
@@ -1283,9 +1283,9 @@ mod tests {
 
     #[test]
     fn check_cmd_write_page_encode() {
-        let mut buffer = [0xBBu8; 512];
+        let mut buffer = [0xBBu8; INT_PAGE_SIZE];
         buffer[0] = 0xAA;
-        buffer[511] = 0xCC;
+        buffer[INT_PAGE_SIZE - 1] = 0xCC;
         let cmd = Command::WritePage {
             address: 0xDEADBEEF,
             data: &buffer,
@@ -1298,7 +1298,7 @@ mod tests {
         assert_eq!(e.next(), Some(0xDE));
         // first byte of data
         assert_eq!(e.next(), Some(0xAA));
-        for _ in 1..511 {
+        for _ in 1..(INT_PAGE_SIZE - 1) {
             assert_eq!(e.next(), Some(0xBB));
         }
         // last byte of data
@@ -1308,6 +1308,66 @@ mod tests {
         assert_eq!(e.next(), None);
         assert_eq!(e.next(), None);
     }
+
+    #[test]
+    fn check_cmd_write_ex_page_decode() {
+        let mut p = CommandDecoder::new();
+        assert_eq!(p.receive(0xEF), Ok(None));
+        assert_eq!(p.receive(0xBE), Ok(None));
+        assert_eq!(p.receive(0xAD), Ok(None));
+        assert_eq!(p.receive(0xDE), Ok(None));
+        for i in 0..EXT_PAGE_SIZE {
+            let datum = i as u8;
+            assert_eq!(p.receive(datum), Ok(None));
+            if datum == ESCAPE_CHAR {
+                assert_eq!(p.receive(datum), Ok(None));
+            }
+        }
+        assert_eq!(p.receive(ESCAPE_CHAR), Ok(None)); // Escape
+        match p.receive(CMD_XWPAGE) {
+            Ok(Some(Command::WriteExPage {
+                        address,
+                        data: ref page,
+                    })) => {
+                assert_eq!(address, 0xDEADBEEF);
+                assert_eq!(page.len(), EXT_PAGE_SIZE);
+                for i in 0..EXT_PAGE_SIZE {
+                    let datum = i as u8;
+                    assert_eq!(datum, page[i as usize]);
+                }
+            }
+            e => panic!("Did not expect: {:?}", e),
+        }
+    }
+
+    #[test]
+    fn check_cmd_write_ex_page_encode() {
+        let mut buffer = [0xBBu8; EXT_PAGE_SIZE];
+        buffer[0] = 0xAA;
+        buffer[EXT_PAGE_SIZE - 1] = 0xCC;
+        let cmd = Command::WriteExPage {
+            address: 0xDEADBEEF,
+            data: &buffer,
+        };
+        let mut e = CommandEncoder::new(&cmd).unwrap();
+        // 4 byte address, little-endian
+        assert_eq!(e.next(), Some(0xEF));
+        assert_eq!(e.next(), Some(0xBE));
+        assert_eq!(e.next(), Some(0xAD));
+        assert_eq!(e.next(), Some(0xDE));
+        // first byte of data
+        assert_eq!(e.next(), Some(0xAA));
+        for _ in 1..(EXT_PAGE_SIZE - 1) {
+            assert_eq!(e.next(), Some(0xBB));
+        }
+        // last byte of data
+        assert_eq!(e.next(), Some(0xCC));
+        assert_eq!(e.next(), Some(ESCAPE_CHAR));
+        assert_eq!(e.next(), Some(CMD_XWPAGE));
+        assert_eq!(e.next(), None);
+        assert_eq!(e.next(), None);
+    }
+
 
     // Responses
 
