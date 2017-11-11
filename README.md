@@ -1,5 +1,7 @@
 # Tockloader Protocol
 
+[![Build Status](https://travis-ci.org/thejpster/tockloader-proto-rs.svg?branch=master)](https://travis-ci.org/thejpster/tockloader-proto-rs)
+
 Implements the Tockloader protocol.
 
 TockOS applications are loaded with `tockloader`. This speaks to the TockOS
