@@ -1555,7 +1555,17 @@ mod tests {
     }
 
     #[test]
-    fn decode_cmd_gattr() {}
+    fn decode_cmd_gattr() {
+        let mut p = CommandDecoder::new();
+        assert_eq!(p.receive(MAX_INDEX), Ok(None));
+        assert_eq!(p.receive(ESCAPE_CHAR), Ok(None)); // Escape
+        match p.receive(CMD_GATTR) {
+            Ok(Some(Command::GetAttr { index })) => {
+                assert_eq!(index, MAX_INDEX);
+            }
+            e => panic!("Did not expect: {:?}", e),
+        }
+    }
 
     #[test]
     fn encode_cmd_crcif() {
@@ -1581,7 +1591,25 @@ mod tests {
     }
 
     #[test]
-    fn decode_cmd_crcif() {}
+    fn decode_cmd_crcif() {
+        let mut p = CommandDecoder::new();
+        assert_eq!(p.receive(0xEF), Ok(None));
+        assert_eq!(p.receive(0xBE), Ok(None));
+        assert_eq!(p.receive(0xAD), Ok(None));
+        assert_eq!(p.receive(0xDE), Ok(None));
+        assert_eq!(p.receive(0x78), Ok(None));
+        assert_eq!(p.receive(0x56), Ok(None));
+        assert_eq!(p.receive(0x34), Ok(None));
+        assert_eq!(p.receive(0x12), Ok(None));
+        assert_eq!(p.receive(ESCAPE_CHAR), Ok(None)); // Escape
+        match p.receive(CMD_CRCIF) {
+            Ok(Some(Command::CrcIntFlash { address, length })) => {
+                assert_eq!(address, 0xDEADBEEF);
+                assert_eq!(length, 0x12345678);
+            }
+            e => panic!("Did not expect: {:?}", e),
+        }
+    }
 
     #[test]
     fn encode_cmd_crcef() {
@@ -1607,7 +1635,25 @@ mod tests {
     }
 
     #[test]
-    fn decode_cmd_crcef() {}
+    fn decode_cmd_crcef() {
+        let mut p = CommandDecoder::new();
+        assert_eq!(p.receive(0xEF), Ok(None));
+        assert_eq!(p.receive(0xBE), Ok(None));
+        assert_eq!(p.receive(0xAD), Ok(None));
+        assert_eq!(p.receive(0xDE), Ok(None));
+        assert_eq!(p.receive(0x78), Ok(None));
+        assert_eq!(p.receive(0x56), Ok(None));
+        assert_eq!(p.receive(0x34), Ok(None));
+        assert_eq!(p.receive(0x12), Ok(None));
+        assert_eq!(p.receive(ESCAPE_CHAR), Ok(None)); // Escape
+        match p.receive(CMD_CRCEF) {
+            Ok(Some(Command::CrcExtFlash { address, length })) => {
+                assert_eq!(address, 0xDEADBEEF);
+                assert_eq!(length, 0x12345678);
+            }
+            e => panic!("Did not expect: {:?}", e),
+        }
+    }
 
     #[test]
     fn encode_cmd_xepage() {
@@ -1625,7 +1671,20 @@ mod tests {
     }
 
     #[test]
-    fn decode_cmd_xepage() {}
+    fn decode_cmd_xepage() {
+        let mut p = CommandDecoder::new();
+        assert_eq!(p.receive(0xEF), Ok(None));
+        assert_eq!(p.receive(0xBE), Ok(None));
+        assert_eq!(p.receive(0xAD), Ok(None));
+        assert_eq!(p.receive(0xDE), Ok(None));
+        assert_eq!(p.receive(ESCAPE_CHAR), Ok(None)); // Escape
+        match p.receive(CMD_XEPAGE) {
+            Ok(Some(Command::EraseExPage { address })) => {
+                assert_eq!(address, 0xDEADBEEF);
+            }
+            e => panic!("Did not expect: {:?}", e),
+        }
+    }
 
     #[test]
     fn encode_cmd_xfinit() {
@@ -1638,7 +1697,14 @@ mod tests {
     }
 
     #[test]
-    fn decode_cmd_xfinit() {}
+    fn decode_cmd_xfinit() {
+        let mut p = CommandDecoder::new();
+        assert_eq!(p.receive(ESCAPE_CHAR), Ok(None)); // Escape
+        match p.receive(CMD_XFINIT) {
+            Ok(Some(Command::ExtFlashInit)) => {}
+            e => panic!("Did not expect: {:?}", e),
+        }
+    }
 
     #[test]
     fn encode_cmd_clkout() {
@@ -1651,7 +1717,14 @@ mod tests {
     }
 
     #[test]
-    fn decode_cmd_clkout() {}
+    fn decode_cmd_clkout() {
+        let mut p = CommandDecoder::new();
+        assert_eq!(p.receive(ESCAPE_CHAR), Ok(None)); // Escape
+        match p.receive(CMD_CLKOUT) {
+            Ok(Some(Command::ClockOut)) => {}
+            e => panic!("Did not expect: {:?}", e),
+        }
+    }
 
     #[test]
     fn encode_cmd_wuser() {
@@ -1677,7 +1750,25 @@ mod tests {
     }
 
     #[test]
-    fn decode_cmd_wuser() {}
+    fn decode_cmd_wuser() {
+        let mut p = CommandDecoder::new();
+        assert_eq!(p.receive(0xEF), Ok(None));
+        assert_eq!(p.receive(0xBE), Ok(None));
+        assert_eq!(p.receive(0xAD), Ok(None));
+        assert_eq!(p.receive(0xDE), Ok(None));
+        assert_eq!(p.receive(0x78), Ok(None));
+        assert_eq!(p.receive(0x56), Ok(None));
+        assert_eq!(p.receive(0x34), Ok(None));
+        assert_eq!(p.receive(0x12), Ok(None));
+        assert_eq!(p.receive(ESCAPE_CHAR), Ok(None)); // Escape
+        match p.receive(CMD_WUSER) {
+            Ok(Some(Command::WriteFlashUserPages { page1, page2 })) => {
+                assert_eq!(page1, 0xDEADBEEF);
+                assert_eq!(page2, 0x12345678);
+            }
+            e => panic!("Did not expect: {:?}", e),
+        }
+    }
 
     #[test]
     fn encode_cmd_change_baud() {
@@ -1700,7 +1791,35 @@ mod tests {
     }
 
     #[test]
-    fn decode_cmd_change_baud() {}
+    fn decode_cmd_change_baud() {
+        let mut p = CommandDecoder::new();
+        assert_eq!(p.receive(0x01), Ok(None));
+        assert_eq!(p.receive(0xEF), Ok(None));
+        assert_eq!(p.receive(0xBE), Ok(None));
+        assert_eq!(p.receive(0xAD), Ok(None));
+        assert_eq!(p.receive(0xDE), Ok(None));
+        assert_eq!(p.receive(ESCAPE_CHAR), Ok(None)); // Escape
+        match p.receive(CMD_CHANGE_BAUD) {
+            Ok(Some(Command::ChangeBaud { mode, baud })) => {
+                assert_eq!(mode, BaudMode::Set);
+                assert_eq!(baud, 0xDEADBEEF);
+            }
+            e => panic!("Did not expect: {:?}", e),
+        }
+        assert_eq!(p.receive(0x02), Ok(None));
+        assert_eq!(p.receive(0xEF), Ok(None));
+        assert_eq!(p.receive(0xBE), Ok(None));
+        assert_eq!(p.receive(0xAD), Ok(None));
+        assert_eq!(p.receive(0xDE), Ok(None));
+        assert_eq!(p.receive(ESCAPE_CHAR), Ok(None)); // Escape
+        match p.receive(CMD_CHANGE_BAUD) {
+            Ok(Some(Command::ChangeBaud { mode, baud })) => {
+                assert_eq!(mode, BaudMode::Verify);
+                assert_eq!(baud, 0xDEADBEEF);
+            }
+            e => panic!("Did not expect: {:?}", e),
+        }
+    }
 
     // Responses
 
