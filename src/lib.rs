@@ -389,7 +389,7 @@ impl CommandDecoder {
                     let index = self.buffer[0];
                     let key = &self.buffer[1..9];
                     let length = self.buffer[9] as usize;
-                    if self.count > (num_expected_bytes + length) {
+                    if self.count == (num_expected_bytes + length) {
                         let value = &self.buffer[10..10 + length];
                         Ok(Some(Command::SetAttr { index, key, value }))
                     } else {
@@ -840,12 +840,12 @@ impl<'a> CommandEncoder<'a> {
         };
         match count {
             0 => self.render_byte(index),
-            1...9 => self.render_buffer(count - 1, KEY_LEN, key),
-            10 => self.render_byte(max_len as u8),
-            x if (max_len > 0) && (x < max_len + 11) => {
-                self.render_buffer(count - 11, max_len, value)
+            1...8 => self.render_buffer(count - 1, KEY_LEN, key),
+            9 => self.render_byte(max_len as u8),
+            x if (max_len > 0) && (x < (max_len + 10)) => {
+                self.render_buffer(x - 10, max_len, value)
             }
-            _ => self.render_basic_cmd(count - (11 + max_len), CMD_SATTR),
+            _ => self.render_basic_cmd(count - (10 + max_len), CMD_SATTR),
         }
     }
 
@@ -901,8 +901,8 @@ impl<'a> CommandEncoder<'a> {
                     BaudMode::Verify => 0x02,
                 })
             }
-            1...3 => self.render_u32(count - 1, baud),
-            _ => self.render_basic_cmd(count - 8, CMD_WUSER),
+            1...4 => self.render_u32(count - 1, baud),
+            _ => self.render_basic_cmd(count - 5, CMD_CHANGE_BAUD),
         }
     }
 }
@@ -1127,7 +1127,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn check_cmd_ping_decode() {
+    fn decode_cmd_ping() {
         let mut p = CommandDecoder::new();
         assert_eq!(p.receive(ESCAPE_CHAR), Ok(None));
         match p.receive(CMD_PING) {
@@ -1137,7 +1137,7 @@ mod tests {
     }
 
     #[test]
-    fn check_cmd_ping_encode() {
+    fn encode_cmd_ping() {
         let cmd = Command::Ping;
         let mut e = CommandEncoder::new(&cmd).unwrap();
         assert_eq!(e.next(), Some(ESCAPE_CHAR));
@@ -1147,7 +1147,7 @@ mod tests {
     }
 
     #[test]
-    fn check_cmd_info_decode() {
+    fn decode_cmd_info() {
         let mut p = CommandDecoder::new();
         assert_eq!(p.receive(ESCAPE_CHAR), Ok(None));
         match p.receive(CMD_INFO) {
@@ -1157,7 +1157,7 @@ mod tests {
     }
 
     #[test]
-    fn check_cmd_info_encode() {
+    fn encode_cmd_info() {
         let cmd = Command::Info;
         let mut e = CommandEncoder::new(&cmd).unwrap();
         assert_eq!(e.next(), Some(ESCAPE_CHAR));
@@ -1167,7 +1167,7 @@ mod tests {
     }
 
     #[test]
-    fn check_cmd_id_decode() {
+    fn decode_cmd_id() {
         let mut p = CommandDecoder::new();
         assert_eq!(p.receive(ESCAPE_CHAR), Ok(None));
         match p.receive(CMD_ID) {
@@ -1177,7 +1177,7 @@ mod tests {
     }
 
     #[test]
-    fn check_cmd_id_encode() {
+    fn encode_cmd_id() {
         let cmd = Command::Id;
         let mut e = CommandEncoder::new(&cmd).unwrap();
         assert_eq!(e.next(), Some(ESCAPE_CHAR));
@@ -1187,7 +1187,7 @@ mod tests {
     }
 
     #[test]
-    fn check_cmd_reset_decode() {
+    fn decode_cmd_reset() {
         let mut p = CommandDecoder::new();
         assert_eq!(p.receive(ESCAPE_CHAR), Ok(None));
         match p.receive(CMD_RESET) {
@@ -1197,7 +1197,7 @@ mod tests {
     }
 
     #[test]
-    fn check_cmd_reset_encode() {
+    fn encode_cmd_reset() {
         let cmd = Command::Reset;
         let mut e = CommandEncoder::new(&cmd).unwrap();
         assert_eq!(e.next(), Some(ESCAPE_CHAR));
@@ -1207,7 +1207,7 @@ mod tests {
     }
 
     #[test]
-    fn check_cmd_erase_page_decode() {
+    fn decode_cmd_erase_page() {
         let mut p = CommandDecoder::new();
         assert_eq!(p.receive(0xEF), Ok(None));
         assert_eq!(p.receive(0xBE), Ok(None));
@@ -1223,7 +1223,7 @@ mod tests {
     }
 
     #[test]
-    fn check_cmd_erase_page_encode() {
+    fn encode_cmd_erase_page() {
         let cmd = Command::ErasePage { address: 0xDEADBEEF };
         let mut e = CommandEncoder::new(&cmd).unwrap();
         // 4 byte address, little-endian
@@ -1238,7 +1238,7 @@ mod tests {
     }
 
     #[test]
-    fn check_cmd_write_page_decode() {
+    fn decode_cmd_write_page() {
         let mut p = CommandDecoder::new();
         assert_eq!(p.receive(0xEF), Ok(None));
         assert_eq!(p.receive(0xBE), Ok(None));
@@ -1269,7 +1269,7 @@ mod tests {
     }
 
     #[test]
-    fn check_cmd_write_page_encode() {
+    fn encode_cmd_write_page() {
         let mut buffer = [0xBBu8; INT_PAGE_SIZE];
         buffer[0] = 0xAA;
         buffer[INT_PAGE_SIZE - 1] = 0xCC;
@@ -1297,7 +1297,7 @@ mod tests {
     }
 
     #[test]
-    fn check_cmd_erase_block_decode() {
+    fn decode_cmd_erase_block() {
         let mut p = CommandDecoder::new();
         assert_eq!(p.receive(0xEF), Ok(None));
         assert_eq!(p.receive(0xBE), Ok(None));
@@ -1313,7 +1313,7 @@ mod tests {
     }
 
     #[test]
-    fn check_cmd_erase_block_encode() {
+    fn encode_cmd_erase_block() {
         let cmd = Command::EraseExBlock { address: 0xDEADBEEF };
         let mut e = CommandEncoder::new(&cmd).unwrap();
         // 4 byte address, little-endian
@@ -1328,7 +1328,7 @@ mod tests {
     }
 
     #[test]
-    fn check_cmd_write_ex_page_decode() {
+    fn decode_cmd_write_ex_page() {
         let mut p = CommandDecoder::new();
         assert_eq!(p.receive(0xEF), Ok(None));
         assert_eq!(p.receive(0xBE), Ok(None));
@@ -1359,7 +1359,7 @@ mod tests {
     }
 
     #[test]
-    fn check_cmd_write_ex_page_encode() {
+    fn encode_cmd_write_ex_page() {
         let mut buffer = [0xBBu8; EXT_PAGE_SIZE];
         buffer[0] = 0xAA;
         buffer[EXT_PAGE_SIZE - 1] = 0xCC;
@@ -1386,18 +1386,321 @@ mod tests {
         assert_eq!(e.next(), None);
     }
 
-    // Test CMD_CRCRX here
-    // Test CMD_RRANGE here
-    // Test CMD_XRRANGE here
-    // Test CMD_SATTR here
-    // Test CMD_GATTR here
-    // Test CMD_CRCIF here
-    // Test CMD_CRCEF here
-    // Test CMD_XEPAGE here
-    // Test CMD_XFINIT here
-    // Test CMD_CLKOUT here
-    // Test CMD_WUSER here
-    // Test CMD_CHANGE_BAUD here
+    #[test]
+    fn encode_cmd_crcrx() {
+        let cmd = Command::CrcRxBuffer;
+        let mut e = CommandEncoder::new(&cmd).unwrap();
+        assert_eq!(e.next(), Some(ESCAPE_CHAR));
+        assert_eq!(e.next(), Some(CMD_CRCRX));
+        assert_eq!(e.next(), None);
+        assert_eq!(e.next(), None);
+    }
+
+    #[test]
+    fn decode_cmd_crcrx() {
+        let mut p = CommandDecoder::new();
+        assert_eq!(p.receive(ESCAPE_CHAR), Ok(None)); // Escape
+        match p.receive(CMD_CRCRX) {
+            Ok(Some(Command::CrcRxBuffer)) => {}
+            e => panic!("Did not expect: {:?}", e),
+        }
+    }
+
+    #[test]
+    fn encode_cmd_rrange() {
+        let cmd = Command::ReadRange {
+            address: 0xDEADBEEF,
+            length: 0x1234,
+        };
+        let mut e = CommandEncoder::new(&cmd).unwrap();
+        // 4 byte address, little-endian
+        assert_eq!(e.next(), Some(0xEF));
+        assert_eq!(e.next(), Some(0xBE));
+        assert_eq!(e.next(), Some(0xAD));
+        assert_eq!(e.next(), Some(0xDE));
+        // 2 byte length
+        assert_eq!(e.next(), Some(0x34));
+        assert_eq!(e.next(), Some(0x12));
+        assert_eq!(e.next(), Some(ESCAPE_CHAR));
+        assert_eq!(e.next(), Some(CMD_RRANGE));
+        assert_eq!(e.next(), None);
+        assert_eq!(e.next(), None);
+    }
+
+    #[test]
+    fn decode_cmd_rrange() {
+        let mut p = CommandDecoder::new();
+        assert_eq!(p.receive(0xEF), Ok(None));
+        assert_eq!(p.receive(0xBE), Ok(None));
+        assert_eq!(p.receive(0xAD), Ok(None));
+        assert_eq!(p.receive(0xDE), Ok(None));
+        assert_eq!(p.receive(0x34), Ok(None));
+        assert_eq!(p.receive(0x12), Ok(None));
+        assert_eq!(p.receive(ESCAPE_CHAR), Ok(None)); // Escape
+        match p.receive(CMD_RRANGE) {
+            Ok(Some(Command::ReadRange { address, length })) => {
+                assert_eq!(address, 0xDEADBEEF);
+                assert_eq!(length, 0x1234);
+            }
+            e => panic!("Did not expect: {:?}", e),
+        }
+    }
+
+    #[test]
+    fn encode_cmd_xrrange() {
+        let cmd = Command::ExReadRange {
+            address: 0xDEADBEEF,
+            length: 0x1234,
+        };
+        let mut e = CommandEncoder::new(&cmd).unwrap();
+        // 4 byte address, little-endian
+        assert_eq!(e.next(), Some(0xEF));
+        assert_eq!(e.next(), Some(0xBE));
+        assert_eq!(e.next(), Some(0xAD));
+        assert_eq!(e.next(), Some(0xDE));
+        // 2 byte length
+        assert_eq!(e.next(), Some(0x34));
+        assert_eq!(e.next(), Some(0x12));
+        assert_eq!(e.next(), Some(ESCAPE_CHAR));
+        assert_eq!(e.next(), Some(CMD_XRRANGE));
+        assert_eq!(e.next(), None);
+        assert_eq!(e.next(), None);
+    }
+
+    #[test]
+    fn decode_cmd_xrrange() {
+        let mut p = CommandDecoder::new();
+        assert_eq!(p.receive(0xEF), Ok(None));
+        assert_eq!(p.receive(0xBE), Ok(None));
+        assert_eq!(p.receive(0xAD), Ok(None));
+        assert_eq!(p.receive(0xDE), Ok(None));
+        assert_eq!(p.receive(0x34), Ok(None));
+        assert_eq!(p.receive(0x12), Ok(None));
+        assert_eq!(p.receive(ESCAPE_CHAR), Ok(None)); // Escape
+        match p.receive(CMD_XRRANGE) {
+            Ok(Some(Command::ExReadRange { address, length })) => {
+                assert_eq!(address, 0xDEADBEEF);
+                assert_eq!(length, 0x1234);
+            }
+            e => panic!("Did not expect: {:?}", e),
+        }
+    }
+
+    #[test]
+    fn encode_cmd_sattr() {
+        let r = Command::SetAttr {
+            index: MAX_INDEX,
+            key: &[0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77],
+            value: &[0xAA, 0xBB, 0xCC, 0xDD],
+        };
+        let mut e = CommandEncoder::new(&r).unwrap();
+        assert_eq!(e.next(), Some(MAX_INDEX));
+        assert_eq!(e.next(), Some(0x00));
+        assert_eq!(e.next(), Some(0x11));
+        assert_eq!(e.next(), Some(0x22));
+        assert_eq!(e.next(), Some(0x33));
+        assert_eq!(e.next(), Some(0x44));
+        assert_eq!(e.next(), Some(0x55));
+        assert_eq!(e.next(), Some(0x66));
+        assert_eq!(e.next(), Some(0x77));
+        assert_eq!(e.next(), Some(0x04));
+        assert_eq!(e.next(), Some(0xAA));
+        assert_eq!(e.next(), Some(0xBB));
+        assert_eq!(e.next(), Some(0xCC));
+        assert_eq!(e.next(), Some(0xDD));
+        // Commands don't seem to need padding
+        assert_eq!(e.next(), Some(ESCAPE_CHAR));
+        assert_eq!(e.next(), Some(CMD_SATTR));
+        assert_eq!(e.next(), None);
+        assert_eq!(e.next(), None);
+    }
+
+    #[test]
+    fn decode_cmd_sattr() {
+        let mut p = CommandDecoder::new();
+        assert_eq!(p.receive(MAX_INDEX), Ok(None));
+        assert_eq!(p.receive(0x00), Ok(None));
+        assert_eq!(p.receive(0x11), Ok(None));
+        assert_eq!(p.receive(0x22), Ok(None));
+        assert_eq!(p.receive(0x33), Ok(None));
+        assert_eq!(p.receive(0x44), Ok(None));
+        assert_eq!(p.receive(0x55), Ok(None));
+        assert_eq!(p.receive(0x66), Ok(None));
+        assert_eq!(p.receive(0x77), Ok(None));
+        assert_eq!(p.receive(0x04), Ok(None));
+        assert_eq!(p.receive(0xAA), Ok(None));
+        assert_eq!(p.receive(0xBB), Ok(None));
+        assert_eq!(p.receive(0xCC), Ok(None));
+        assert_eq!(p.receive(0xDD), Ok(None));
+        assert_eq!(p.receive(ESCAPE_CHAR), Ok(None)); // Escape
+        match p.receive(CMD_SATTR) {
+            Ok(Some(Command::SetAttr { index, key, value })) => {
+                assert_eq!(index, MAX_INDEX);
+                assert_eq!(key, [0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77]);
+                assert_eq!(value, [0xAA, 0xBB, 0xCC, 0xDD]);
+            }
+            e => panic!("Did not expect: {:?}", e),
+        }
+    }
+
+    #[test]
+    fn encode_cmd_gattr() {
+        let r = Command::GetAttr { index: MAX_INDEX };
+        let mut e = CommandEncoder::new(&r).unwrap();
+        assert_eq!(e.next(), Some(MAX_INDEX));
+        assert_eq!(e.next(), Some(ESCAPE_CHAR));
+        assert_eq!(e.next(), Some(CMD_GATTR));
+        assert_eq!(e.next(), None);
+        assert_eq!(e.next(), None);
+    }
+
+    #[test]
+    fn decode_cmd_gattr() {}
+
+    #[test]
+    fn encode_cmd_crcif() {
+        let cmd = Command::CrcIntFlash {
+            address: 0xDEADBEEF,
+            length: 0x12345678,
+        };
+        let mut e = CommandEncoder::new(&cmd).unwrap();
+        // 4 byte address, little-endian
+        assert_eq!(e.next(), Some(0xEF));
+        assert_eq!(e.next(), Some(0xBE));
+        assert_eq!(e.next(), Some(0xAD));
+        assert_eq!(e.next(), Some(0xDE));
+        // 4 byte length
+        assert_eq!(e.next(), Some(0x78));
+        assert_eq!(e.next(), Some(0x56));
+        assert_eq!(e.next(), Some(0x34));
+        assert_eq!(e.next(), Some(0x12));
+        assert_eq!(e.next(), Some(ESCAPE_CHAR));
+        assert_eq!(e.next(), Some(CMD_CRCIF));
+        assert_eq!(e.next(), None);
+        assert_eq!(e.next(), None);
+    }
+
+    #[test]
+    fn decode_cmd_crcif() {}
+
+    #[test]
+    fn encode_cmd_crcef() {
+        let cmd = Command::CrcExtFlash {
+            address: 0xDEADBEEF,
+            length: 0x12345678,
+        };
+        let mut e = CommandEncoder::new(&cmd).unwrap();
+        // 4 byte address, little-endian
+        assert_eq!(e.next(), Some(0xEF));
+        assert_eq!(e.next(), Some(0xBE));
+        assert_eq!(e.next(), Some(0xAD));
+        assert_eq!(e.next(), Some(0xDE));
+        // 4 byte length
+        assert_eq!(e.next(), Some(0x78));
+        assert_eq!(e.next(), Some(0x56));
+        assert_eq!(e.next(), Some(0x34));
+        assert_eq!(e.next(), Some(0x12));
+        assert_eq!(e.next(), Some(ESCAPE_CHAR));
+        assert_eq!(e.next(), Some(CMD_CRCEF));
+        assert_eq!(e.next(), None);
+        assert_eq!(e.next(), None);
+    }
+
+    #[test]
+    fn decode_cmd_crcef() {}
+
+    #[test]
+    fn encode_cmd_xepage() {
+        let cmd = Command::EraseExPage { address: 0xDEADBEEF };
+        let mut e = CommandEncoder::new(&cmd).unwrap();
+        // 4 byte address, little-endian
+        assert_eq!(e.next(), Some(0xEF));
+        assert_eq!(e.next(), Some(0xBE));
+        assert_eq!(e.next(), Some(0xAD));
+        assert_eq!(e.next(), Some(0xDE));
+        assert_eq!(e.next(), Some(ESCAPE_CHAR));
+        assert_eq!(e.next(), Some(CMD_XEPAGE));
+        assert_eq!(e.next(), None);
+        assert_eq!(e.next(), None);
+    }
+
+    #[test]
+    fn decode_cmd_xepage() {}
+
+    #[test]
+    fn encode_cmd_xfinit() {
+        let cmd = Command::ExtFlashInit {};
+        let mut e = CommandEncoder::new(&cmd).unwrap();
+        assert_eq!(e.next(), Some(ESCAPE_CHAR));
+        assert_eq!(e.next(), Some(CMD_XFINIT));
+        assert_eq!(e.next(), None);
+        assert_eq!(e.next(), None);
+    }
+
+    #[test]
+    fn decode_cmd_xfinit() {}
+
+    #[test]
+    fn encode_cmd_clkout() {
+        let cmd = Command::ClockOut {};
+        let mut e = CommandEncoder::new(&cmd).unwrap();
+        assert_eq!(e.next(), Some(ESCAPE_CHAR));
+        assert_eq!(e.next(), Some(CMD_CLKOUT));
+        assert_eq!(e.next(), None);
+        assert_eq!(e.next(), None);
+    }
+
+    #[test]
+    fn decode_cmd_clkout() {}
+
+    #[test]
+    fn encode_cmd_wuser() {
+        let cmd = Command::WriteFlashUserPages {
+            page1: 0xDEADBEEF,
+            page2: 0x12345678,
+        };
+        let mut e = CommandEncoder::new(&cmd).unwrap();
+        // 4 byte address, little-endian
+        assert_eq!(e.next(), Some(0xEF));
+        assert_eq!(e.next(), Some(0xBE));
+        assert_eq!(e.next(), Some(0xAD));
+        assert_eq!(e.next(), Some(0xDE));
+        // 4 byte length
+        assert_eq!(e.next(), Some(0x78));
+        assert_eq!(e.next(), Some(0x56));
+        assert_eq!(e.next(), Some(0x34));
+        assert_eq!(e.next(), Some(0x12));
+        assert_eq!(e.next(), Some(ESCAPE_CHAR));
+        assert_eq!(e.next(), Some(CMD_WUSER));
+        assert_eq!(e.next(), None);
+        assert_eq!(e.next(), None);
+    }
+
+    #[test]
+    fn decode_cmd_wuser() {}
+
+    #[test]
+    fn encode_cmd_change_baud() {
+        let cmd = Command::ChangeBaud {
+            mode: BaudMode::Set,
+            baud: 0xDEADBEEF,
+        };
+        let mut e = CommandEncoder::new(&cmd).unwrap();
+        // Mode
+        assert_eq!(e.next(), Some(0x01));
+        // 4 byte baud (0x0001 C200)
+        assert_eq!(e.next(), Some(0xEF));
+        assert_eq!(e.next(), Some(0xBE));
+        assert_eq!(e.next(), Some(0xAD));
+        assert_eq!(e.next(), Some(0xDE));
+        assert_eq!(e.next(), Some(ESCAPE_CHAR));
+        assert_eq!(e.next(), Some(CMD_CHANGE_BAUD));
+        assert_eq!(e.next(), None);
+        assert_eq!(e.next(), None);
+    }
+
+    #[test]
+    fn decode_cmd_change_baud() {}
 
     // Responses
 

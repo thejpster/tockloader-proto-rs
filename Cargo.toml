@@ -4,3 +4,4 @@ version = "0.1.0"
 authors = ["Jonathan 'theJPster' Pallant <github@thejpster.org.uk>"]
 
 [dependencies]
+byteorder = { version = "1", default-features = false }
