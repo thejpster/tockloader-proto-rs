@@ -2,6 +2,9 @@
 name = "tockloader-proto"
 version = "0.1.0"
 authors = ["Jonathan 'theJPster' Pallant <github@thejpster.org.uk>"]
+description = "A #[no_std] implementation of the protocol used by tockloader and the TockOS bootloader."
+licence = "MIT/Apache-2.0"
+repository = "https://github.com/thejpster/tockloader-proto-rs"
 
 [dependencies]
 byteorder = { version = "1", default-features = false }
