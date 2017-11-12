@@ -13,7 +13,7 @@ Usage
 
 In your embedded bootloader, you need a loop that looks something like:
 
-```
+```rust
 use tockloader_proto::{ResponseEncoder, CommandDecoder};
 
 #[no_mangle]
