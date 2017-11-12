@@ -18,7 +18,7 @@ use tockloader_proto::{ResponseEncoder, CommandDecoder};
 
 #[no_mangle]
 pub extern "C" fn main() {
-    let mut uart = uart::Uart::new(uart::UartId::Uart0, 115200, uart::NewlineMode::SwapLFtoCRLF);
+    let mut uart = uart::Uart::new(uart::UartId::Uart0, 115200, uart::NewlineMode::Binary);
     let mut decoder = CommandDecoder::new();
     loop {
         if let Ok(Some(ch)) = uart.getc_try() {
