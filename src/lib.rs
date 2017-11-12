@@ -564,8 +564,13 @@ impl ResponseDecoder {
                     Ok(Some(Response::CrcExtFlash { crc }))
                 }
                 RES_INFO => {
-                    let info = &self.buffer[1..self.count];
-                    Ok(Some(Response::Info { info }))
+                    let length: usize = self.buffer[1] as usize;
+                    if length + 1 < self.count {
+                        let info = &self.buffer[2..length + 2];
+                        Ok(Some(Response::Info { info }))
+                    } else {
+                        Err(Error::BadArguments)
+                    }
                 }
                 _ => Err(Error::UnknownCommand),
             };
@@ -665,7 +670,7 @@ impl ResponseDecoder {
                 }
             }
             RES_GATTR => {
-                self.set_payload_len(1 + 8 + 55)?;
+                self.set_payload_len(1 + KEY_LEN + MAX_ATTR_LEN)?;
                 self.load_char(ch)?;
                 Ok(None)
             }
@@ -680,7 +685,8 @@ impl ResponseDecoder {
                 Ok(None)
             }
             RES_INFO => {
-                self.set_payload_len(8)?;
+                // length + data
+                self.set_payload_len(1 + MAX_INFO_LEN)?;
                 self.load_char(ch)?;
                 Ok(None)
             }
@@ -765,7 +771,7 @@ impl<'a> CommandEncoder<'a> {
         if (idx < data.len()) && (idx < page_size) {
             self.render_byte(data[idx])
         } else if idx < page_size {
-            self.render_byte(0xFF) // pad short data with 0xFFs
+            self.render_byte(0x00) // pad short data with nulls
         } else {
             (0, None)
         }
@@ -1044,7 +1050,8 @@ impl<'a> ResponseEncoder<'a> {
         let count = self.count;
         match count {
             0...1 => self.render_header(count, RES_INFO),
-            _ => self.render_buffer(count - 2, info.len(), info),
+            2 => self.render_byte(info.len() as u8),
+            _ => self.render_buffer(count - 3, MAX_INFO_LEN, info),
         }
     }
 
@@ -1070,7 +1077,7 @@ impl<'a> ResponseEncoder<'a> {
         if (idx < data.len()) && (idx < page_size) {
             self.render_byte(data[idx])
         } else if idx < page_size {
-            self.render_byte(0xFF) // pad short data with 0xFFs
+            self.render_byte(0x00) // pad short data with nulls
         } else {
             (0, None)
         }
@@ -2100,6 +2107,8 @@ mod tests {
         let mut p = ResponseDecoder::new();
         assert_eq!(p.receive(ESCAPE_CHAR), Ok(None));
         assert_eq!(p.receive(RES_INFO), Ok(None));
+        // length
+        assert_eq!(p.receive(0x08), Ok(None));
         // eight bytes of data
         assert_eq!(p.receive(0x00), Ok(None));
         assert_eq!(p.receive(0x11), Ok(None));
@@ -2108,8 +2117,14 @@ mod tests {
         assert_eq!(p.receive(0x44), Ok(None));
         assert_eq!(p.receive(0x55), Ok(None));
         assert_eq!(p.receive(0x66), Ok(None));
+        assert_eq!(p.receive(0x77), Ok(None));
+        // pad up to 191 bytes
+        for _ in 8..MAX_INFO_LEN - 1 {
+            assert_eq!(p.receive(0x00), Ok(None));
+        }
+        // final padding byte
         assert_eq!(
-            p.receive(0x77),
+            p.receive(0x00),
             Ok(Some(Response::Info {
                 info: &[0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77],
             }))
@@ -2123,6 +2138,9 @@ mod tests {
         let mut e = ResponseEncoder::new(&r).unwrap();
         assert_eq!(e.next(), Some(ESCAPE_CHAR));
         assert_eq!(e.next(), Some(RES_INFO));
+        // length
+        assert_eq!(e.next(), Some(0x08));
+        // data
         assert_eq!(e.next(), Some(0x00));
         assert_eq!(e.next(), Some(0x11));
         assert_eq!(e.next(), Some(0x22));
@@ -2131,6 +2149,10 @@ mod tests {
         assert_eq!(e.next(), Some(0x55));
         assert_eq!(e.next(), Some(0x66));
         assert_eq!(e.next(), Some(0x77));
+        // padding
+        for _ in 8..MAX_INFO_LEN {
+            assert_eq!(e.next(), Some(0x00));
+        }
         assert_eq!(e.next(), None);
         assert_eq!(e.next(), None);
     }
