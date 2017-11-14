@@ -144,6 +144,8 @@ pub enum Error {
     /// The user called `set_payload_len` yet we
     /// got a response of bounded length.
     SetLength,
+    /// The buffer passed by the user wasn't large enough for the packet.
+    BufferTooSmall,
 }
 
 /// The `ComandDecoder` takes bytes and gives you `Command`s.
@@ -270,6 +272,24 @@ impl CommandDecoder {
             buffer: [0u8; 520],
             count: 0,
         }
+    }
+
+    /// Decode a whole buffers worth of bytes.
+    ///
+    /// Due to lifetime problems, the decoded `Command`s are sent via `callback` rather
+    /// than being returned.
+    pub fn read<F>(&mut self, buffer: &[u8], callback: F) -> Result<(), Error>
+    where
+        F: Fn(&Command),
+    {
+        for ch in buffer {
+            match self.receive(*ch) {
+                Err(e) => return Err(e),
+                Ok(None) => {}
+                Ok(Some(ref cmd)) => callback(cmd),
+            }
+        }
+        Ok(())
     }
 
     /// Empty the RX buffer.
@@ -493,6 +513,24 @@ impl ResponseDecoder {
             count: 0,
             needed: None,
         }
+    }
+
+    /// Decode a whole buffers worth of bytes.
+    ///
+    /// Due to lifetime problems, the decoded `Response`s are sent via `callback` rather
+    /// than being returned.
+    pub fn read<F>(&mut self, buffer: &[u8], callback: F) -> Result<(), Error>
+    where
+        F: Fn(&Response),
+    {
+        for ch in buffer {
+            match self.receive(*ch) {
+                Err(e) => return Err(e),
+                Ok(None) => {}
+                Ok(Some(ref cmd)) => callback(cmd),
+            }
+        }
+        Ok(())
     }
 
     /// Empty the RX buffer.
@@ -734,6 +772,13 @@ impl<'a> CommandEncoder<'a> {
         })
     }
 
+    /// Reset the `CommandEncoder`, so that next time you call `self.next()`
+    /// you get the first byte again.
+    pub fn reset(&mut self) {
+        self.count = 0;
+        self.sent_escape = false;
+    }
+
     fn render_byte(&mut self, byte: u8) -> (usize, Option<u8>) {
         if byte == ESCAPE_CHAR {
             if self.sent_escape {
@@ -949,6 +994,15 @@ impl<'a> Iterator for CommandEncoder<'a> {
     }
 }
 
+impl<'a> Encoder for CommandEncoder<'a> {
+    /// Reset the `Encoder`, so that next time you call `self.next()`
+    /// you get the first byte again.
+    fn reset(&mut self) {
+        self.count = 0;
+        self.sent_escape = false;
+    }
+}
+
 impl<'a> ResponseEncoder<'a> {
     /// Create a new `ResponseEncoder`.
     ///
@@ -1092,6 +1146,13 @@ impl<'a> ResponseEncoder<'a> {
     }
 }
 
+impl<'a> Encoder for ResponseEncoder<'a> {
+    fn reset(&mut self) {
+        self.count = 0;
+        self.sent_escape = false;
+    }
+}
+
 impl<'a> Iterator for ResponseEncoder<'a> {
     type Item = u8;
 
@@ -1128,6 +1189,26 @@ impl<'a> Iterator for ResponseEncoder<'a> {
 // Private Impl/Functions/Modules
 //
 // ****************************************************************************
+
+trait Encoder: Iterator<Item = u8> {
+    fn reset(&mut self);
+
+    /// Encode to bytes, storing them in the given buffer.
+    /// Returns the amount of buffer space used.
+    fn write(&mut self, buffer: &mut [u8]) -> usize {
+        for i in 0..buffer.len() {
+            if let Some(ch) = self.next() {
+                // Copy over byte
+                buffer[i] = ch;
+            } else {
+                // We're finished outputting bytes
+                return i;
+            }
+        }
+        // Got to the end - whole buffer used
+        return buffer.len();
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -2155,6 +2236,106 @@ mod tests {
         }
         assert_eq!(e.next(), None);
         assert_eq!(e.next(), None);
+    }
+
+    #[test]
+    fn check_response_write() {
+        let r = Response::Pong;
+        // More than large enough
+        let mut e = ResponseEncoder::new(&r).unwrap();
+        let mut buffer = [0xFFu8; 4];
+        assert_eq!(e.write(&mut buffer), 2);
+        assert_eq!(&buffer[0..4], &[ESCAPE_CHAR, RES_PONG, 0xFF, 0xFF]);
+
+        // Too small - do it in pieces
+        e.reset();
+        buffer[0] = 0xFF;
+        assert_eq!(e.write(&mut buffer[0..1]), 1);
+        assert_eq!(buffer[0], ESCAPE_CHAR);
+        buffer[0] = 0xFF;
+        assert_eq!(e.write(&mut buffer[0..1]), 1);
+        assert_eq!(buffer[0], RES_PONG);
+        assert_eq!(e.write(&mut buffer[0..1]), 0);
+
+        // perfectly sized
+        e.reset();
+        for b in buffer.iter_mut() {
+            *b = 0xFF
+        }
+        assert_eq!(e.write(&mut buffer[0..2]), 2);
+        assert_eq!(&buffer[0..2], &[ESCAPE_CHAR, RES_PONG]);
+    }
+
+    #[test]
+    fn check_command_write() {
+        let r = Command::Ping;
+        let mut e = CommandEncoder::new(&r).unwrap();
+        let mut buffer = [0xFFu8; 4];
+        // More than large enough
+        assert_eq!(e.write(&mut buffer), 2);
+        assert_eq!(&buffer[0..4], &[ESCAPE_CHAR, CMD_PING, 0xFF, 0xFF]);
+
+        // Too small - do it in pieces
+        e.reset();
+        buffer[0] = 0xFF;
+        assert_eq!(e.write(&mut buffer[0..1]), 1);
+        assert_eq!(buffer[0], ESCAPE_CHAR);
+        buffer[0] = 0xFF;
+        assert_eq!(e.write(&mut buffer[0..1]), 1);
+        assert_eq!(buffer[0], CMD_PING);
+        assert_eq!(e.write(&mut buffer[0..1]), 0);
+
+        // perfectly sized
+        e.reset();
+        for b in buffer.iter_mut() {
+            *b = 0xFF
+        }
+        assert_eq!(e.write(&mut buffer[0..2]), 2);
+        assert_eq!(&buffer[0..2], &[ESCAPE_CHAR, CMD_PING]);
+    }
+
+    #[test]
+    fn check_command_decode_buffer() {
+        let mut p = CommandDecoder::new();
+        let buffer = [
+            0xEFu8,
+            0xBE,
+            0xAD,
+            0xDE,
+            0x78,
+            0x56,
+            0x34,
+            0x12,
+            ESCAPE_CHAR,
+            CMD_CRCIF,
+        ];
+        let callback = |x: &Command| match x {
+            &Command::CrcIntFlash { address, length } => {
+                assert_eq!(address, 0xDEADBEEF);
+                assert_eq!(length, 0x12345678);
+            }
+            _ => panic!("Bad command {:?}", x),
+        };
+        match p.read(&buffer, callback) {
+            Ok(_) => {}
+            Err(e) => panic!("Did not expect: {:?}", e),
+        }
+    }
+
+    #[test]
+    fn check_response_decode_buffer() {
+        let mut p = ResponseDecoder::new();
+        let buffer = [ESCAPE_CHAR, RES_CRCXF, 0xEF, 0xBE, 0xAD, 0xDE];
+        let callback = |x: &Response| match x {
+            &Response::CrcExtFlash { crc } => {
+                assert_eq!(crc, 0xDEADBEEF);
+            }
+            _ => panic!("Bad command {:?}", x),
+        };
+        match p.read(&buffer, callback) {
+            Ok(_) => {}
+            Err(e) => panic!("Did not expect: {:?}", e),
+        }
     }
 
 }
