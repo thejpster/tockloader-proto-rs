@@ -1,6 +1,6 @@
 [package]
 name = "tockloader-proto"
-version = "0.1.1"
+version = "0.2.0"
 authors = ["Jonathan 'theJPster' Pallant <github@thejpster.org.uk>"]
 description = "A #[no_std] implementation of the protocol used by tockloader and the TockOS bootloader."
 license = "MIT/Apache-2.0"
