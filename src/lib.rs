@@ -18,6 +18,10 @@ extern crate byteorder;
 
 use byteorder::{LittleEndian, ByteOrder};
 
+pub mod prelude {
+    pub use super::Encoder;
+}
+
 // ****************************************************************************
 //
 // Public Types
@@ -261,6 +265,26 @@ const MAX_INFO_LEN: usize = 192;
 // Public Impl/Functions/Modules
 //
 // ****************************************************************************
+
+pub trait Encoder: Iterator<Item = u8> {
+    fn reset(&mut self);
+
+    /// Encode to bytes, storing them in the given buffer.
+    /// Returns the amount of buffer space used.
+    fn write(&mut self, buffer: &mut [u8]) -> usize {
+        for i in 0..buffer.len() {
+            if let Some(ch) = self.next() {
+                // Copy over byte
+                buffer[i] = ch;
+            } else {
+                // We're finished outputting bytes
+                return i;
+            }
+        }
+        // Got to the end - whole buffer used
+        return buffer.len();
+    }
+}
 
 impl CommandDecoder {
     /// Create a new `CommandDecoder`.
@@ -1189,26 +1213,6 @@ impl<'a> Iterator for ResponseEncoder<'a> {
 // Private Impl/Functions/Modules
 //
 // ****************************************************************************
-
-trait Encoder: Iterator<Item = u8> {
-    fn reset(&mut self);
-
-    /// Encode to bytes, storing them in the given buffer.
-    /// Returns the amount of buffer space used.
-    fn write(&mut self, buffer: &mut [u8]) -> usize {
-        for i in 0..buffer.len() {
-            if let Some(ch) = self.next() {
-                // Copy over byte
-                buffer[i] = ch;
-            } else {
-                // We're finished outputting bytes
-                return i;
-            }
-        }
-        // Got to the end - whole buffer used
-        return buffer.len();
-    }
-}
 
 #[cfg(test)]
 mod tests {
